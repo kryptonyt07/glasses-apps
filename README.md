@@ -16,7 +16,9 @@ Teleprompter/line-runner for self-tapes and rehearsal. Editor packs the script i
 (`#s=` base64) — sides never touch the repo or any server log (a `?s=` variant exists as fallback;
 that one does appear in server logs, use it only if the `#s=` form won't load). Last script is
 cached in `localStorage` on the device; position survives app restarts. Read mode shows everything;
-Rehearse mode hides YOUR lines until you pinch ✓. Long lines are auto-paginated at ~230 chars.
+Rehearse mode hides YOUR lines until you pinch ✓; Prompter mode auto-scrolls the whole script
+(✓ pause · ▲▼ speed · ◀▶ jump). Text size S/M/L on the home menu (persisted) — tune it on-face.
+Long lines are auto-paginated at ~230 chars in Read/Rehearse.
 
 ## Platform constraints (verified from DAT docs, Jul 2026)
 - No microphone, no Web Speech, no camera, no text input, no service workers on Web Apps.
