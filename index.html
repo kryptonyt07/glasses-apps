@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<title>HUD Apps</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:600px; height:600px; overflow:hidden; background:#000; color:#fff;
+    font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+  #app { padding:32px; display:flex; flex-direction:column; height:100%; }
+  h1 { font-size:30px; color:#00E5FF; letter-spacing:2px; margin-bottom:24px; }
+  a.item { display:block; font-size:26px; padding:18px 20px; margin-bottom:14px; color:#e8f6ff;
+    text-decoration:none; background:#0a0a0a; border:3px solid #2a3540; border-radius:14px; }
+  a.item.focused { background:#06232b; border-color:#00E5FF; }
+  .soon { color:#57616a; font-size:20px; padding:12px 20px; }
+  .hint { margin-top:auto; font-size:17px; color:#7d8790; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>HUD APPS</h1>
+  <a class="item focused" href="line-runner/">🎬 Line Runner</a>
+  <div class="soon">⏱ Drill Timer — soon</div>
+  <div class="soon">📊 Daily Dash — soon</div>
+  <div class="hint">pinch ✓ to open</div>
+</div>
+<script>
+'use strict';
+const items = [...document.querySelectorAll('a.item')];
+let idx = 0;
+document.addEventListener('keydown', (e)=>{
+  if (e.key==='ArrowDown') idx = Math.min(idx+1, items.length-1);
+  else if (e.key==='ArrowUp') idx = Math.max(idx-1, 0);
+  else if (e.key==='Enter'){ location.href = items[idx].href; return; }
+  items.forEach((el,i)=>el.classList.toggle('focused', i===idx));
+});
+</script>
+</body>
+</html>

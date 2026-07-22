@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Line Runner — Script Editor</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#e6edf3; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    max-width:720px; margin:0 auto; padding:24px 16px 80px; }
+  h1 { font-size:22px; color:#58d6ff; margin-bottom:4px; }
+  .sub { color:#8b949e; font-size:14px; margin-bottom:20px; }
+  label { display:block; font-size:13px; color:#8b949e; margin:16px 0 6px; text-transform:uppercase; letter-spacing:1px; }
+  input, select, textarea { width:100%; background:#161b22; color:#e6edf3; border:1px solid #30363d;
+    border-radius:8px; padding:10px 12px; font-size:16px; }
+  textarea { min-height:220px; font-family:ui-monospace,Menlo,monospace; font-size:14px; line-height:1.5; }
+  button { margin-top:18px; width:100%; padding:14px; font-size:17px; font-weight:600; border:none;
+    border-radius:10px; background:#1f6feb; color:#fff; }
+  button.secondary { background:#21262d; color:#c9d1d9; margin-top:10px; }
+  #out { display:none; margin-top:22px; padding:16px; background:#161b22; border:1px solid #238636; border-radius:10px; }
+  #out h2 { font-size:16px; color:#3fb950; margin-bottom:10px; }
+  #link { word-break:break-all; font-size:12px; color:#8b949e; max-height:80px; overflow:auto;
+    background:#0d1117; padding:8px; border-radius:6px; margin-bottom:10px; }
+  #preview { margin-top:22px; }
+  .chunk { padding:8px 12px; border-left:3px solid #30363d; margin-bottom:6px; font-size:14px; }
+  .chunk.mine { border-color:#58d6ff; background:#0b2530; }
+  .chunk.action { color:#8b949e; font-style:italic; }
+  .chunk .w { font-weight:700; font-size:12px; letter-spacing:1px; color:#ffc24b; }
+  .chunk.mine .w { color:#58d6ff; }
+  .note { font-size:13px; color:#8b949e; margin-top:8px; line-height:1.5; }
+</style>
+</head>
+<body>
+<h1>Line Runner — Script Editor</h1>
+<div class="sub">Paste sides → pick your character → generate the glasses link. Nothing is uploaded; the script is packed into the link itself.</div>
+
+<label>Script title</label>
+<input id="title" placeholder="e.g. GUARDIAN S2 — Jess sides, ep 4">
+
+<label>Sides (either "NAME: line" per line, or screenplay format with the NAME on its own line)</label>
+<textarea id="src" placeholder="DET. RAY: You were there that night, weren't you?
+JESS: I already told you. I was home.
+She looks away.
+DET. RAY: Your phone says otherwise."></textarea>
+
+<label>Your character</label>
+<select id="me"><option value="">— parse first —</option></select>
+
+<button id="parseBtn">1 · Parse & preview</button>
+<button id="genBtn" class="secondary">2 · Generate glasses link</button>
+
+<div id="out">
+  <h2>Link ready</h2>
+  <div id="link"></div>
+  <button id="copyBtn" class="secondary">Copy link</button>
+  <button id="openBtn" class="secondary">Open preview (use arrow keys)</button>
+  <div class="note">On the glasses: Meta AI app → developer mode apps → update Line Runner's URL to this link (or add it as a new app). If the app opens without your script, use the "?s=" variant: <span id="altnote"></span></div>
+</div>
+
+<div id="preview"></div>
+
+<script>
+'use strict';
+const MAXPAGE = 230; // chars per displayed page on the 600x600 screen
+
+function parseSides(raw){
+  const lines = raw.replace(/\r/g,'').split('\n');
+  const chunks = [];
+  const names = new Set();
+  const nameOnly = /^([A-Z][A-Z0-9 .'\-]{1,29})(\s*\((?:V\.O\.|O\.S\.|CONT'D|VO|OS)\.?\))?$/;
+  const nameColon = /^([A-Z][A-Z0-9 .'\-]{0,29}):\s*(.+)$/;
+  let i = 0;
+  while (i < lines.length){
+    const line = lines[i].trim();
+    if (!line){ i++; continue; }
+    let m = line.match(nameColon);
+    if (m){
+      const who = m[1].trim();
+      names.add(who);
+      chunks.push({who, text:m[2].trim(), action:false});
+      i++; continue;
+    }
+    m = line.match(nameOnly);
+    if (m && i+1 < lines.length && lines[i+1].trim()){
+      const who = m[1].trim();
+      names.add(who);
+      let buf = [];
+      i++;
+      while (i < lines.length && lines[i].trim() && !lines[i].trim().match(nameOnly) && !lines[i].trim().match(nameColon)){
+        const t = lines[i].trim();
+        if (!(t.startsWith('(') && t.endsWith(')'))) buf.push(t); // drop parentheticals
+        i++;
+      }
+      chunks.push({who, text:buf.join(' '), action:false});
+      continue;
+    }
+    chunks.push({who:'', text:line, action:true});
+    i++;
+  }
+  return {chunks, names:[...names]};
+}
+
+function paginate(chunks){
+  const out = [];
+  for (const c of chunks){
+    if (c.text.length <= MAXPAGE){ out.push(c); continue; }
+    const pages = [];
+    let rest = c.text;
+    while (rest.length > MAXPAGE){
+      let cut = rest.lastIndexOf('. ', MAXPAGE);
+      if (cut < MAXPAGE*0.4) cut = rest.lastIndexOf(' ', MAXPAGE);
+      if (cut <= 0) cut = MAXPAGE;
+      pages.push(rest.slice(0, cut+1).trim());
+      rest = rest.slice(cut+1).trim();
+    }
+    if (rest) pages.push(rest);
+    pages.forEach((p,idx)=>out.push({...c, text:p, part:'('+(idx+1)+'/'+pages.length+')'}));
+  }
+  return out;
+}
+
+function b64uEncode(str){
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i=0;i<bytes.length;i+=0x8000)
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i+0x8000));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+
+let parsed = null;
+
+document.getElementById('parseBtn').onclick = ()=>{
+  parsed = parseSides(document.getElementById('src').value);
+  const sel = document.getElementById('me');
+  sel.innerHTML = parsed.names.map(n=>'<option>'+n+'</option>').join('') || '<option value="">no names found</option>';
+  renderPreview();
+};
+
+document.getElementById('me').onchange = renderPreview;
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderPreview(){
+  if (!parsed) return;
+  const me = document.getElementById('me').value;
+  document.getElementById('preview').innerHTML =
+    '<label>Preview — ' + parsed.chunks.length + ' beats (your lines highlighted)</label>' +
+    parsed.chunks.map(c=>{
+      const mine = !c.action && c.who === me;
+      return '<div class="chunk'+(mine?' mine':'')+(c.action?' action':'')+'">' +
+        (c.who ? '<span class="w">'+esc(c.who)+(mine?' (YOU)':'')+'</span><br>' : '') + esc(c.text) + '</div>';
+    }).join('');
+}
+
+document.getElementById('genBtn').onclick = ()=>{
+  if (!parsed){ document.getElementById('parseBtn').click(); }
+  if (!parsed || !parsed.chunks.length){ alert('Paste your sides first.'); return; }
+  const me = document.getElementById('me').value;
+  const chunks = paginate(parsed.chunks).map(c=>({
+    who:c.who, text:c.text, mine:(!c.action && c.who===me), action:c.action, ...(c.part?{part:c.part}:{})
+  }));
+  const payload = { title: document.getElementById('title').value || 'Sides', me, chunks };
+  const packed = b64uEncode(JSON.stringify(payload));
+  const base = location.href.replace(/editor\.html.*$/, '');
+  const hashUrl = base + '#s=' + packed;
+  const queryUrl = base + '?s=' + packed;
+  document.getElementById('link').textContent = hashUrl;
+  document.getElementById('altnote').textContent = queryUrl.slice(0, 60) + '…';
+  document.getElementById('out').style.display = 'block';
+  document.getElementById('copyBtn').onclick = ()=>navigator.clipboard.writeText(hashUrl);
+  document.getElementById('openBtn').onclick = ()=>window.open(hashUrl, '_blank');
+  window.scrollTo({top: document.getElementById('out').offsetTop - 20, behavior:'smooth'});
+};
+</script>
+</body>
+</html>
