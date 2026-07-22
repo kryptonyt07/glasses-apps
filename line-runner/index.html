@@ -32,6 +32,18 @@
   #text.hidden-line { color:#00E5FF; }
   .foot { font-size:17px; color:#7d8790; margin-top:14px; }
   .part { color:#57616a; font-size:20px; margin-left:8px; font-weight:400; }
+  .notice { font-size:18px; color:#FFC24B; margin-bottom:14px; }
+
+  /* PROMPTER */
+  #pwin { flex:1; overflow:hidden; position:relative; }
+  #pstream { will-change:transform; padding-top:260px; line-height:1.35; font-weight:600; }
+  .pchunk { margin-bottom:26px; color:#fff; }
+  .pchunk.p-mine { color:#9ef3ff; }
+  .pchunk.p-cue { color:#ffe9c2; font-weight:500; }
+  .pchunk.p-action { color:#8a939c; font-style:italic; font-weight:400; }
+  .plabel { font-size:0.6em; letter-spacing:2px; color:#FFC24B; margin-bottom:2px; }
+  .p-mine .plabel { color:#00E5FF; }
+  .pend { color:#57616a; text-align:center; padding:40px 0 300px; }
 </style>
 </head>
 <body>
@@ -56,6 +68,7 @@ function b64uDecode(s){
 }
 
 let data = null;
+let loadError = false;
 (function load(){
   let packed = null;
   if (location.hash && location.hash.startsWith('#s=')) packed = location.hash.slice(3);
@@ -65,7 +78,7 @@ let data = null;
       data = JSON.parse(b64uDecode(packed));
       localStorage.setItem('lr:last', JSON.stringify(data));
       localStorage.removeItem('lr:pos');
-    } catch(e){ /* fall through */ }
+    } catch(e){ loadError = true; }
   }
   if (!data){
     try { data = JSON.parse(localStorage.getItem('lr:last')); } catch(e){}
@@ -75,11 +88,23 @@ let data = null;
 
 // ---------- state ----------
 let screen = 'home';       // 'home' | 'run'
-let mode = 'read';         // 'read' | 'rehearse'
+let mode = 'read';         // 'read' | 'rehearse' | 'prompt'
 let pos = 0;
 let revealed = false;
 let focusIdx = 0;
 const savedPos = parseInt(localStorage.getItem('lr:pos') || '0', 10) || 0;
+
+// text size (S/M/L) — the on-face legibility knob
+const SIZES = ['S','M','L'], FACTORS = {S:0.85, M:1, L:1.2};
+let sizeLabel = localStorage.getItem('lr:size') || 'M';
+if (!FACTORS[sizeLabel]) sizeLabel = 'M';
+function sizeFactor(){ return FACTORS[sizeLabel]; }
+
+// prompter state
+let raf = null, py = 0, paused = false, lastT = 0;
+let pspeed = parseFloat(localStorage.getItem('lr:pspeed') || '40');
+if (!(pspeed >= 10 && pspeed <= 120)) pspeed = 40;
+function cancelRaf(){ if (raf){ cancelAnimationFrame(raf); raf = null; } }
 
 const app = document.getElementById('app');
 
@@ -90,6 +115,12 @@ function homeItems(){
     items.push({label:'Resume at line ' + (savedPos+1), act:()=>start(localStorage.getItem('lr:mode')||'read', savedPos)});
   items.push({label:'Read mode', act:()=>start('read',0)});
   items.push({label:'Rehearse mode  (lines hidden)', act:()=>start('rehearse',0)});
+  items.push({label:'Prompter mode  (auto-scroll)', act:()=>start('prompt',0)});
+  items.push({label:'Text size: ' + sizeLabel, act:()=>{
+    sizeLabel = SIZES[(SIZES.indexOf(sizeLabel)+1) % SIZES.length];
+    localStorage.setItem('lr:size', sizeLabel);
+    renderHome();
+  }});
   return items;
 }
 
@@ -100,6 +131,7 @@ function renderHome(){
     '<div class="home" style="display:flex;flex-direction:column;height:100%">' +
     '<h1>LINE RUNNER</h1>' +
     '<div class="sub">' + esc(data.title || 'Untitled') + ' · ' + data.chunks.length + ' beats · you are ' + esc(data.me || '?') + '</div>' +
+    (loadError ? '<div class="notice">⚠ link script failed to load — showing last saved</div>' : '') +
     '<div class="menu">' +
     items.map((it,i)=>'<button class="focusable'+(i===focusIdx?' focused':'')+'">'+esc(it.label)+'</button>').join('') +
     '</div>' +
@@ -140,17 +172,60 @@ function renderRun(){
 function fitText(){
   const el = document.getElementById('text');
   if (!el) return;
-  let size = 38;
+  const f = sizeFactor();
+  let size = Math.round(38 * f);
+  const min = Math.round(20 * f);
   el.style.fontSize = size + 'px';
-  while (el.scrollHeight > el.clientHeight && size > 20){
+  while (el.scrollHeight > el.clientHeight && size > min){
     size -= 2;
     el.style.fontSize = size + 'px';
   }
 }
 
+// ---------- prompter ----------
+function renderPrompt(){
+  app.innerHTML =
+    '<div class="bar"><span id="pmode">PROMPT</span><span id="pspd">' + Math.round(pspeed) + ' px/s</span></div>' +
+    '<div id="pwin"><div id="pstream">' +
+    data.chunks.map(c=>{
+      const cls = c.action ? 'p-action' : (c.mine ? 'p-mine' : 'p-cue');
+      const label = (c.who && !c.action) ? '<div class="plabel">'+esc(c.who)+(c.mine?' (YOU)':'')+'</div>' : '';
+      return '<div class="pchunk '+cls+'">'+label+esc(c.text)+'</div>';
+    }).join('') +
+    '<div class="pend">— END · ✓ to restart —</div></div></div>' +
+    '<div class="foot">✓ pause/go · ▲▼ speed · ◀▶ jump</div>';
+  document.getElementById('pstream').style.fontSize = Math.round(30 * sizeFactor()) + 'px';
+  py = 0; lastT = 0; paused = false;
+  cancelRaf();
+  raf = requestAnimationFrame(pstep);
+}
+
+function pstep(t){
+  const stream = document.getElementById('pstream');
+  if (!stream){ cancelRaf(); return; }
+  if (!lastT) lastT = t;
+  const dt = Math.min((t - lastT) / 1000, 0.1);
+  lastT = t;
+  if (!paused) py += pspeed * dt;
+  const max = Math.max(0, stream.scrollHeight - stream.parentElement.clientHeight);
+  if (py >= max){ py = max; if (!paused){ paused = true; setPmode(); } }
+  if (py < 0) py = 0;
+  stream.style.transform = 'translateY(' + (-py) + 'px)';
+  raf = requestAnimationFrame(pstep);
+}
+
+function setPmode(){
+  const el = document.getElementById('pmode');
+  if (el) el.textContent = 'PROMPT' + (paused ? ' ⏸' : '');
+}
+
 // ---------- shared ----------
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function render(){ screen==='home' ? renderHome() : renderRun(); }
+function render(){
+  if (screen === 'home') renderHome();
+  else if (mode === 'prompt') renderPrompt();
+  else renderRun();
+}
 
 function next(){
   if (pos < data.chunks.length - 1){ pos++; revealed = (mode==='read'); render(); }
@@ -158,7 +233,7 @@ function next(){
 function prev(){
   if (pos > 0){ pos--; revealed = (mode==='read'); render(); }
 }
-function goHome(){ screen='home'; focusIdx=0; render(); }
+function goHome(){ cancelRaf(); screen='home'; focusIdx=0; render(); }
 
 document.addEventListener('keydown', (e)=>{
   if (screen === 'home'){
@@ -166,6 +241,23 @@ document.addEventListener('keydown', (e)=>{
     if (e.key==='ArrowDown'){ focusIdx = (focusIdx+1)%items.length; renderHome(); }
     else if (e.key==='ArrowUp'){ focusIdx = (focusIdx-1+items.length)%items.length; renderHome(); }
     else if (e.key==='Enter'){ items[focusIdx].act(); }
+    return;
+  }
+  // prompter screen
+  if (mode === 'prompt'){
+    if (e.key==='Enter'){
+      const stream = document.getElementById('pstream');
+      const max = stream ? Math.max(0, stream.scrollHeight - stream.parentElement.clientHeight) : 0;
+      if (paused && py >= max && max > 0){ py = 0; lastT = 0; }  // restart from END
+      paused = !paused; setPmode();
+    }
+    else if (e.key==='ArrowUp'){ pspeed = Math.min(120, pspeed + 10); }
+    else if (e.key==='ArrowDown'){ pspeed = Math.max(10, pspeed - 10); }
+    else if (e.key==='ArrowRight'){ py += 400; }
+    else if (e.key==='ArrowLeft'){ py = Math.max(0, py - 400); }
+    const spd = document.getElementById('pspd');
+    if (spd) spd.textContent = Math.round(pspeed) + ' px/s';
+    localStorage.setItem('lr:pspeed', String(pspeed));
     return;
   }
   // run screen
