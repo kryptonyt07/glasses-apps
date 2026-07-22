@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<title>Daily Dash</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:600px; height:600px; overflow:hidden; background:#000; color:#fff;
+    font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+  #app { width:600px; height:600px; display:flex; flex-direction:column; padding:32px; }
+  #clock { font-size:120px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; }
+  #date { font-size:24px; color:#8fd6e8; margin-top:6px; letter-spacing:1px; }
+  #wx { font-size:26px; color:#FFC24B; margin-top:16px; min-height:34px; }
+  #wx.dim { color:#57616a; font-size:20px; }
+  #focus { margin-top:22px; flex:1; overflow:hidden; }
+  #focus h2 { font-size:17px; color:#7d8790; letter-spacing:2px; margin-bottom:10px; }
+  .item { font-size:25px; padding:9px 14px; border-radius:10px; border:3px solid transparent; color:#e8f6ff; }
+  .item.focused { border-color:#00E5FF; background:#06232b; }
+  .item.done { color:#57616a; text-decoration:line-through; }
+  .hint { font-size:16px; color:#7d8790; margin-top:8px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="clock">--:--</div>
+  <div id="date"></div>
+  <div id="wx" class="dim">pinch ✓ on an item · hold list with ▲▼</div>
+  <div id="focus"></div>
+  <div class="hint" id="hint"></div>
+</div>
+<script>
+'use strict';
+function b64uDecode(s){
+  s = s.replace(/-/g,'+').replace(/_/g,'/');
+  const bin = atob(s), bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+// focus items: from #s= link (config.html) or last saved
+let items = [];
+(function load(){
+  let packed = null;
+  if (location.hash && location.hash.startsWith('#s=')) packed = location.hash.slice(3);
+  if (!packed) packed = new URLSearchParams(location.search).get('s');
+  if (packed){
+    try { items = JSON.parse(b64uDecode(packed)).items || []; localStorage.setItem('dd:items', JSON.stringify(items)); } catch(e){}
+  }
+  if (!items.length){ try { items = JSON.parse(localStorage.getItem('dd:items')) || []; } catch(e){} }
+  if (!items.length) items = ['Set today\'s 3 priorities in config.html'];
+})();
+
+const todayKey = ()=>'dd:done:' + new Date().toISOString().slice(0,10);
+let done = {};
+try { done = JSON.parse(localStorage.getItem(todayKey())) || {}; } catch(e){}
+let idx = 0;
+
+function renderClock(){
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    String(n.getHours()).padStart(2,'0') + ':' + String(n.getMinutes()).padStart(2,'0');
+  document.getElementById('date').textContent =
+    n.toLocaleDateString('en-AU',{weekday:'long', day:'numeric', month:'long'});
+}
+
+function renderFocus(){
+  document.getElementById('focus').innerHTML = '<h2>TODAY</h2>' +
+    items.slice(0,5).map((t,i)=>'<div class="item'+(i===idx?' focused':'')+(done[i]?' done':'')+'">'+esc(t)+'</div>').join('');
+  const left = items.slice(0,5).filter((_,i)=>!done[i]).length;
+  document.getElementById('hint').textContent = left === 0 ? 'all clear ✓' : left + ' open · ✓ toggle done';
+}
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// weather: open-meteo (CORS-open, keyless) via phone GPS — first pinch grants permission
+const WX = {0:'clear',1:'mostly clear',2:'partly cloudy',3:'overcast',45:'fog',48:'fog',
+  51:'drizzle',53:'drizzle',55:'drizzle',61:'rain',63:'rain',65:'heavy rain',
+  71:'snow',73:'snow',75:'snow',80:'showers',81:'showers',82:'heavy showers',95:'storm',96:'storm',99:'storm'};
+let wxLoaded = false;
+
+function loadWeather(){
+  const el = document.getElementById('wx');
+  const cached = localStorage.getItem('dd:wx');
+  if (cached){
+    try { const c = JSON.parse(cached);
+      if (Date.now() - c.at < 30*60*1000){ el.textContent = c.text; el.className = ''; wxLoaded = true; return; }
+    } catch(e){}
+  }
+  el.textContent = 'getting weather…'; el.className = 'dim';
+  navigator.geolocation.getCurrentPosition((p)=>{
+    fetch('https://api.open-meteo.com/v1/forecast?latitude='+p.coords.latitude.toFixed(3)+
+      '&longitude='+p.coords.longitude.toFixed(3)+'&current=temperature_2m,weather_code&timezone=auto')
+    .then(r=>r.json()).then(j=>{
+      const t = Math.round(j.current.temperature_2m);
+      const w = WX[j.current.weather_code] || '';
+      const text = t + '°C · ' + w;
+      el.textContent = text; el.className = '';
+      wxLoaded = true;
+      localStorage.setItem('dd:wx', JSON.stringify({at:Date.now(), text}));
+    }).catch(()=>{ el.textContent = 'weather unavailable'; el.className='dim'; });
+  }, ()=>{ el.textContent = 'location denied — no weather'; el.className='dim'; }, {timeout:8000});
+}
+
+document.addEventListener('keydown',(e)=>{
+  const n = Math.min(items.length,5);
+  if (e.key==='ArrowDown'){ idx = (idx+1)%n; renderFocus(); }
+  else if (e.key==='ArrowUp'){ idx = (idx-1+n)%n; renderFocus(); }
+  else if (e.key==='Enter'){
+    if (!wxLoaded){ loadWeather(); }          // first pinch doubles as the permission gesture
+    done[idx] = !done[idx];
+    localStorage.setItem(todayKey(), JSON.stringify(done));
+    renderFocus();
+  }
+});
+
+renderClock(); renderFocus();
+setInterval(renderClock, 15000);
+loadWeather();
+</script>
+</body>
+</html>

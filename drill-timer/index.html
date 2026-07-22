@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<title>Drill Timer</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:600px; height:600px; overflow:hidden; background:#000; color:#fff;
+    font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+  #app { width:600px; height:600px; display:flex; flex-direction:column; padding:28px; }
+  h1 { font-size:30px; color:#00E5FF; letter-spacing:2px; margin-bottom:22px; }
+  .menu { display:flex; flex-direction:column; gap:12px; }
+  .menu button { display:block; width:100%; text-align:left; font-size:25px; padding:15px 20px;
+    background:#0a0a0a; color:#e8f6ff; border:3px solid #2a3540; border-radius:14px; }
+  .menu button.focused { background:#06232b; border-color:#00E5FF; }
+  .hint { margin-top:auto; font-size:17px; color:#7d8790; }
+
+  .bar { display:flex; justify-content:space-between; font-size:20px; color:#8fd6e8; letter-spacing:1px; }
+  #phase { font-size:44px; font-weight:800; letter-spacing:4px; text-align:center; margin-top:10px; }
+  #phase.work { color:#00FF85; }
+  #phase.rest { color:#FFC24B; }
+  #phase.done { color:#00E5FF; }
+  #clock { flex:1; display:flex; align-items:center; justify-content:center;
+    font-size:190px; font-weight:800; font-variant-numeric:tabular-nums; }
+  #clock.warn { color:#FFC24B; }
+  #clock.sw { font-size:120px; }
+  .foot { font-size:17px; color:#7d8790; text-align:center; }
+  #flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; }
+  #flash.on { opacity:0.9; transition:none; }
+  #flash.off { opacity:0; transition:opacity .35s; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="flash"></div>
+<script>
+'use strict';
+const PRESETS = [
+  { label:'SHOOTING  45s work / 15s rest × 8', work:45, rest:15, rounds:8 },
+  { label:'CONDITIONING  60 / 20 × 6', work:60, rest:20, rounds:6 },
+  { label:'HIIT  30 / 10 × 10', work:30, rest:10, rounds:10 },
+  { label:'STOPWATCH', sw:true }
+];
+
+let screen = 'home', focusIdx = parseInt(localStorage.getItem('dt:preset')||'0',10)||0;
+let preset = null, phase = 'work', round = 1, remaining = 0, running = false, swT = 0;
+let timer = null, lastTick = 0;
+
+const app = document.getElementById('app');
+const flashEl = document.getElementById('flash');
+
+function renderHome(){
+  screen = 'home';
+  stopTick();
+  app.innerHTML = '<h1>DRILL TIMER</h1><div class="menu">' +
+    PRESETS.map((p,i)=>'<button class="'+(i===focusIdx?'focused':'')+'">'+p.label+'</button>').join('') +
+    '</div><div class="hint">swipe ▲▼ choose · pinch ✓ start</div>';
+}
+
+function fmt(s){
+  s = Math.max(0, Math.ceil(s));
+  if (s < 100 && preset && !preset.sw) return String(s);
+  const m = Math.floor(s/60), r = s%60;
+  return m + ':' + String(r).padStart(2,'0');
+}
+
+function renderRun(){
+  const isSW = preset.sw;
+  const phaseTxt = isSW ? 'STOPWATCH' : (phase==='done' ? 'DONE ✓' : phase.toUpperCase());
+  const phaseCls = isSW ? 'work' : phase;
+  const warn = !isSW && phase!=='done' && remaining <= 3.5;
+  app.innerHTML =
+    '<div class="bar"><span>'+(running?'▶':'⏸')+'</span><span>'+(isSW?'':'ROUND '+round+' / '+preset.rounds)+'</span></div>' +
+    '<div id="phase" class="'+phaseCls+'">'+phaseTxt+'</div>' +
+    '<div id="clock" class="'+(isSW?'sw':'')+(warn?' warn':'')+'">'+(isSW?fmtSW(swT):fmt(remaining))+'</div>' +
+    '<div class="foot">✓ '+(running?'pause':'go')+' · ▶ skip · ◀ restart · ▲ home</div>';
+}
+
+function fmtSW(t){
+  const m = Math.floor(t/60), s = Math.floor(t%60), d = Math.floor((t%1)*10);
+  return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+d;
+}
+
+function flash(){
+  flashEl.className = 'on';
+  setTimeout(()=>{ flashEl.className = 'off'; }, 120);
+}
+
+function start(i){
+  focusIdx = i;
+  localStorage.setItem('dt:preset', String(i));
+  preset = PRESETS[i];
+  screen = 'run';
+  history.pushState({run:true},'');
+  phase = 'work'; round = 1; swT = 0;
+  remaining = preset.sw ? 0 : preset.work;
+  running = true;
+  lastTick = performance.now();
+  startTick();
+  renderRun();
+}
+
+function startTick(){ stopTick(); timer = setInterval(tick, 100); }
+function stopTick(){ if (timer){ clearInterval(timer); timer = null; } }
+
+function tick(){
+  const now = performance.now();
+  const dt = (now - lastTick)/1000;
+  lastTick = now;
+  if (!running) return;
+  if (preset.sw){ swT += dt; renderRun(); return; }
+  if (phase === 'done') return;
+  remaining -= dt;
+  if (remaining <= 0){
+    flash();
+    if (phase === 'work'){
+      if (round >= preset.rounds){ phase = 'done'; running = false; }
+      else { phase = 'rest'; remaining = preset.rest; }
+    } else {
+      phase = 'work'; round++; remaining = preset.work;
+    }
+  }
+  renderRun();
+}
+
+document.addEventListener('keydown',(e)=>{
+  if (screen === 'home'){
+    if (e.key==='ArrowDown'){ focusIdx=(focusIdx+1)%PRESETS.length; renderHome(); }
+    else if (e.key==='ArrowUp'){ focusIdx=(focusIdx-1+PRESETS.length)%PRESETS.length; renderHome(); }
+    else if (e.key==='Enter'){ start(focusIdx); }
+    return;
+  }
+  if (e.key==='Enter'){
+    if (phase==='done'){ start(focusIdx); return; }   // restart when finished
+    running = !running; lastTick = performance.now(); renderRun();
+  }
+  else if (e.key==='ArrowRight'){ // skip phase
+    if (preset.sw){ swT = 0; }
+    else if (phase==='work'){ if (round>=preset.rounds){ phase='done'; running=false; } else { phase='rest'; remaining=preset.rest; } }
+    else { phase='work'; round++; remaining=preset.work; }
+    renderRun();
+  }
+  else if (e.key==='ArrowLeft'){ // restart current phase
+    if (preset.sw) swT = 0;
+    else remaining = (phase==='work'? preset.work : preset.rest);
+    renderRun();
+  }
+  else if (e.key==='ArrowUp'){ renderHome(); }
+});
+
+window.addEventListener('popstate', ()=>{ if (screen==='run') renderHome(); });
+renderHome();
+</script>
+</body>
+</html>
