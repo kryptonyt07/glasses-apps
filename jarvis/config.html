@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis — Gateway Config</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#e6edf3; font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    max-width:720px; margin:0 auto; padding:24px 16px 80px; }
+  h1 { font-size:22px; color:#58d6ff; margin-bottom:4px; }
+  .sub { color:#8b949e; font-size:14px; margin-bottom:20px; line-height:1.5; }
+  label { display:block; font-size:13px; color:#8b949e; margin:16px 0 6px; text-transform:uppercase; letter-spacing:1px; }
+  input { width:100%; background:#161b22; color:#e6edf3; border:1px solid #30363d; border-radius:8px;
+    padding:10px 12px; font-size:16px; }
+  button { margin-top:18px; width:100%; padding:14px; font-size:17px; font-weight:600; border:none;
+    border-radius:10px; background:#1f6feb; color:#fff; }
+  button.secondary { background:#21262d; color:#c9d1d9; margin-top:10px; }
+  #out { display:none; margin-top:22px; padding:16px; background:#161b22; border:1px solid #238636; border-radius:10px; }
+  #link { word-break:break-all; font-size:12px; color:#8b949e; background:#0d1117; padding:8px;
+    border-radius:6px; margin-bottom:10px; }
+  .warn { color:#d29922; font-size:13px; margin-top:12px; line-height:1.5; }
+</style>
+</head>
+<body>
+<h1>Jarvis — link the gateway</h1>
+<div class="sub">The glasses app needs your gateway's HTTPS URL and its key (printed when gateway.py starts,
+or in <code>~/Developer/jarvis-gw/.secret</code>). Generates a link that stores both on the glasses.</div>
+
+<label>Gateway HTTPS URL</label>
+<input id="gwu" placeholder="https://your-mac.tailnet.ts.net  or  https://xxx.trycloudflare.com">
+
+<label>Gateway key</label>
+<input id="gwk" placeholder="contents of .secret">
+
+<button id="gen">Generate Jarvis link</button>
+<div id="out">
+  <div id="link"></div>
+  <button id="copy" class="secondary">Copy link</button>
+  <button id="open" class="secondary">Open Jarvis (browser test)</button>
+</div>
+<div class="warn">The key rides inside this link — treat the link like a password. Don't post it anywhere;
+add it straight into the Meta AI app's developer apps and delete it from clipboard history.</div>
+
+<script>
+'use strict';
+function b64uEncode(str){
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i=0;i<bytes.length;i+=0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i,i+0x8000));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+document.getElementById('gen').onclick = ()=>{
+  const gw = document.getElementById('gwu').value.trim().replace(/\/$/,'');
+  const k = document.getElementById('gwk').value.trim();
+  if (!gw.startsWith('https://') || !k){ alert('Need an https:// URL and the key.'); return; }
+  const url = location.href.replace(/config\.html.*$/,'') + '#c=' + b64uEncode(JSON.stringify({gw,k}));
+  document.getElementById('link').textContent = url;
+  document.getElementById('out').style.display = 'block';
+  document.getElementById('copy').onclick = ()=>navigator.clipboard.writeText(url);
+  document.getElementById('open').onclick = ()=>window.open(url,'_blank');
+};
+</script>
+</body>
+</html>

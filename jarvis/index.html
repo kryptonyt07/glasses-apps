@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<title>Jarvis</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:600px; height:600px; overflow:hidden; background:#000; color:#fff;
+    font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+  #app { width:600px; height:600px; display:flex; flex-direction:column; padding:28px; }
+  h1 { font-size:30px; color:#00E5FF; letter-spacing:2px; margin-bottom:4px; }
+  .sub { font-size:18px; color:#7d8790; margin-bottom:20px; }
+  .menu { display:flex; flex-direction:column; gap:12px; }
+  .menu button { display:block; width:100%; text-align:left; font-size:24px; padding:14px 18px;
+    background:#0a0a0a; color:#e8f6ff; border:3px solid #2a3540; border-radius:14px; }
+  .menu button.focused { background:#06232b; border-color:#00E5FF; }
+  .hint { margin-top:auto; font-size:16px; color:#7d8790; }
+  .bar { display:flex; justify-content:space-between; font-size:19px; color:#8fd6e8; margin-bottom:14px; letter-spacing:1px; }
+  #body { flex:1; overflow:hidden; font-size:30px; line-height:1.35; font-weight:500; }
+  #body .dim { color:#8a939c; }
+  #body .warn { color:#FFC24B; }
+  .bt { font-size:24px; padding:6px 0; color:#e8f6ff; }
+  .bt::before { content:'· '; color:#00E5FF; }
+  .wx { color:#FFC24B; font-size:26px; margin:8px 0 14px; }
+  .bigtime { font-size:64px; font-weight:800; line-height:1; }
+  .date { color:#8fd6e8; font-size:22px; margin-bottom:4px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+'use strict';
+function b64uDecode(s){
+  s = s.replace(/-/g,'+').replace(/_/g,'/');
+  const bin = atob(s), bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+// gateway config from #c= link (config.html) or saved
+let cfg = null;
+(function(){
+  let packed = location.hash.startsWith('#c=') ? location.hash.slice(3)
+             : new URLSearchParams(location.search).get('c');
+  if (packed){
+    try { cfg = JSON.parse(b64uDecode(packed)); localStorage.setItem('jv:cfg', JSON.stringify(cfg)); } catch(e){}
+  }
+  if (!cfg){ try { cfg = JSON.parse(localStorage.getItem('jv:cfg')); } catch(e){} }
+})();
+
+const TEMPLATES = [
+  { label:'What do I focus on right now?', q:'Given it is {time} on {date}, what single thing should I focus on right now? One pick, one reason.' },
+  { label:'One line before I walk in', q:'Give me one grounded, non-cheesy line to hold in my head before walking into a high-stakes meeting.' },
+  { label:'Reset me (2 minutes)', q:'Give me a 2-minute mental reset I can do standing up, no phone. Plain steps.' },
+  { label:'Talk me out of a dumb purchase', q:'I am about to impulse-buy something. Give me the three questions to ask before spending, fast.' }
+];
+
+let screen = 'home', focusIdx = 0, askIdx = 0;
+const app = document.getElementById('app');
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+const HOME = [
+  { label:'🌅 Brief', act: showBrief },
+  { label:'🧠 Ask Jarvis…', act: ()=>{ screen='ask'; askIdx=0; render(); } },
+  { label:'📡 Status', act: showStatus }
+];
+
+function render(){
+  if (screen==='home'){
+    app.innerHTML = '<h1>JARVIS</h1><div class="sub">' + (cfg ? 'gateway linked' : '⚠ no gateway — open config.html on phone') + '</div>' +
+      '<div class="menu">' + HOME.map((m,i)=>'<button class="'+(i===focusIdx?'focused':'')+'">'+m.label+'</button>').join('') + '</div>' +
+      '<div class="hint">▲▼ choose · ✓ select</div>';
+  } else if (screen==='ask'){
+    app.innerHTML = '<h1>ASK</h1><div class="sub">titan-brain, local, private</div>' +
+      '<div class="menu">' + TEMPLATES.map((t,i)=>'<button class="'+(i===askIdx?'focused':'')+'">'+esc(t.label)+'</button>').join('') + '</div>' +
+      '<div class="hint">▲▼ choose · ✓ ask · ◀ back</div>';
+  }
+}
+
+function page(title, html, foot){
+  screen = 'page';
+  app.innerHTML = '<div class="bar"><span>'+title+'</span><span id="pgtime"></span></div>' +
+    '<div id="body">'+html+'</div><div class="hint">'+(foot||'◀ back')+'</div>';
+}
+
+function gw(path, params){
+  if (!cfg || !cfg.gw || !cfg.k) return Promise.reject(new Error('no gateway configured'));
+  const u = new URL(cfg.gw.replace(/\/$/,'') + path);
+  u.searchParams.set('k', cfg.k);
+  for (const k in (params||{})) u.searchParams.set(k, params[k]);
+  return fetch(u).then(r=>r.json());
+}
+
+function showBrief(){
+  page('BRIEF', '<span class="dim">loading…</span>');
+  const go = (lat,lon)=>{
+    gw('/v1/brief', (lat!=null)?{lat,lon}:{}).then(j=>{
+      let h = '<div class="bigtime">'+esc(j.time)+'</div><div class="date">'+esc(j.date)+'</div>';
+      if (j.weather) h += '<div class="wx">'+esc(j.weather)+'</div>';
+      if (j.items && j.items.length) h += j.items.map(t=>'<div class="bt">'+esc(t)+'</div>').join('');
+      else h += '<div class="dim">no items — edit brief-items.txt</div>';
+      if (!j.calendar) h += '<div class="dim" style="font-size:18px;margin-top:10px">calendar + mail: not connected yet</div>';
+      page('BRIEF', h);
+    }).catch(e=>page('BRIEF','<span class="warn">'+esc(e.message)+'</span>'));
+  };
+  navigator.geolocation.getCurrentPosition(
+    p=>go(p.coords.latitude.toFixed(3), p.coords.longitude.toFixed(3)),
+    ()=>go(null,null), {timeout:5000});
+}
+
+function showStatus(){
+  page('STATUS','<span class="dim">pinging…</span>');
+  gw('/v1/ping').then(j=>{
+    page('STATUS','gateway <span style="color:#00FF85">ONLINE</span><br>brain: '+esc(j.brain)+'<br>mac time: '+esc(j.time));
+  }).catch(e=>page('STATUS','<span class="warn">gateway OFFLINE<br>'+esc(e.message)+'</span>'));
+}
+
+function ask(t){
+  page('JARVIS','<span class="dim">thinking…</span>');
+  const now = new Date();
+  const q = t.q.replace('{time}', now.toTimeString().slice(0,5)).replace('{date}', now.toDateString());
+  gw('/v1/ask', {q}).then(j=>{
+    if (j.error) page('JARVIS','<span class="warn">'+esc(j.error)+'</span>');
+    else { page('JARVIS', esc(j.text)); fit(); }
+  }).catch(e=>page('JARVIS','<span class="warn">'+esc(e.message)+'</span>'));
+}
+
+function fit(){
+  const el = document.getElementById('body');
+  let size = 30;
+  while (el.scrollHeight > el.clientHeight && size > 18){
+    size -= 2; el.style.fontSize = size + 'px';
+  }
+}
+
+document.addEventListener('keydown',(e)=>{
+  if (screen==='home'){
+    if (e.key==='ArrowDown'){ focusIdx=(focusIdx+1)%HOME.length; render(); }
+    else if (e.key==='ArrowUp'){ focusIdx=(focusIdx-1+HOME.length)%HOME.length; render(); }
+    else if (e.key==='Enter'){ HOME[focusIdx].act(); }
+  } else if (screen==='ask'){
+    if (e.key==='ArrowDown'){ askIdx=(askIdx+1)%TEMPLATES.length; render(); }
+    else if (e.key==='ArrowUp'){ askIdx=(askIdx-1+TEMPLATES.length)%TEMPLATES.length; render(); }
+    else if (e.key==='Enter'){ ask(TEMPLATES[askIdx]); }
+    else if (e.key==='ArrowLeft'){ screen='home'; render(); }
+  } else { // page
+    if (e.key==='ArrowLeft' || e.key==='Enter'){ screen='home'; render(); }
+  }
+});
+
+render();
+</script>
+</body>
+</html>
