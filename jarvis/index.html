@@ -95,26 +95,40 @@ function gw(path, params){
   return fetch(u).then(r=>r.json());
 }
 
+let briefCards = [], briefIdx = 0;
+
 function showBrief(){
   page('BRIEF', '<span class="dim">loading…</span>');
   const go = (lat,lon)=>{
     gw('/v1/brief', (lat!=null)?{lat,lon}:{}).then(j=>{
+      briefCards = [];
       let h = '<div class="bigtime">'+esc(j.time)+'</div><div class="date">'+esc(j.date)+'</div>';
       if (j.weather) h += '<div class="wx">'+esc(j.weather)+'</div>';
+      if (!j.calendar && !j.mail) h += '<div class="dim" style="font-size:18px">calendar + mail unavailable</div>';
+      briefCards.push(['NOW', h]);
       if (j.calendar && j.calendar.length)
-        h += '<div class="sec">CALENDAR</div>' + j.calendar.map(t=>'<div class="cv">'+esc(t)+'</div>').join('');
+        briefCards.push(['CALENDAR', j.calendar.map(t=>'<div class="cv">'+esc(t)+'</div>').join('')]);
       if (j.mail && j.mail.length)
-        h += '<div class="sec">MAIL · '+(j.mail_unread||j.mail.length)+' UNREAD</div>' + j.mail.map(t=>'<div class="mv">'+esc(t)+'</div>').join('');
+        briefCards.push(['MAIL · '+(j.mail_unread||j.mail.length)+' UNREAD',
+          j.mail.map(t=>'<div class="mv">'+esc(t)+'</div>').join('')]);
       if (j.items && j.items.length)
-        h += '<div class="sec">FOCUS</div>' + j.items.slice(0, (j.calendar||j.mail) ? 3 : 5).map(t=>'<div class="bt">'+esc(t)+'</div>').join('');
-      if (!j.calendar && !j.mail)
-        h += '<div class="dim" style="font-size:18px;margin-top:10px">calendar + mail unavailable</div>';
-      page('BRIEF', h);
+        briefCards.push(['FOCUS', j.items.slice(0,5).map(t=>'<div class="bt">'+esc(t)+'</div>').join('')]);
+      briefIdx = 0;
+      renderBriefCard();
     }).catch(e=>page('BRIEF','<span class="warn">'+esc(e.message)+'</span>'));
   };
   navigator.geolocation.getCurrentPosition(
     p=>go(p.coords.latitude.toFixed(3), p.coords.longitude.toFixed(3)),
     ()=>go(null,null), {timeout:5000});
+}
+
+function renderBriefCard(){
+  const [title, html] = briefCards[briefIdx];
+  screen = 'brief';
+  app.innerHTML = '<div class="bar"><span>'+title+'</span><span>'+(briefIdx+1)+' / '+briefCards.length+'</span></div>' +
+    '<div id="body">'+html+'</div>' +
+    '<div class="hint">'+(briefIdx < briefCards.length-1 ? '▶ next · ' : '')+'◀ '+(briefIdx ? 'back' : 'home')+'</div>';
+  fit();
 }
 
 function showStatus(){
@@ -152,6 +166,18 @@ document.addEventListener('keydown',(e)=>{
     else if (e.key==='ArrowUp'){ askIdx=(askIdx-1+TEMPLATES.length)%TEMPLATES.length; render(); }
     else if (e.key==='Enter'){ ask(TEMPLATES[askIdx]); }
     else if (e.key==='ArrowLeft'){ screen='home'; render(); }
+  } else if (screen==='brief'){
+    if (e.key==='ArrowRight' || e.key==='ArrowDown'){
+      if (briefIdx < briefCards.length-1){ briefIdx++; renderBriefCard(); }
+    }
+    else if (e.key==='ArrowLeft' || e.key==='ArrowUp'){
+      if (briefIdx > 0){ briefIdx--; renderBriefCard(); }
+      else { screen='home'; render(); }
+    }
+    else if (e.key==='Enter'){
+      if (briefIdx < briefCards.length-1){ briefIdx++; renderBriefCard(); }
+      else { screen='home'; render(); }
+    }
   } else { // page
     if (e.key==='ArrowLeft' || e.key==='Enter'){ screen='home'; render(); }
   }
