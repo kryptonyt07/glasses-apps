@@ -22,6 +22,9 @@
   #body .warn { color:#FFC24B; }
   .bt { font-size:24px; padding:6px 0; color:#e8f6ff; }
   .bt::before { content:'· '; color:#00E5FF; }
+  .sec { font-size:16px; letter-spacing:2px; color:#FFC24B; margin:12px 0 2px; }
+  .cv { font-size:22px; padding:3px 0; color:#e8f6ff; }
+  .mv { font-size:20px; padding:3px 0; color:#cfd8df; }
   .wx { color:#FFC24B; font-size:26px; margin:8px 0 14px; }
   .bigtime { font-size:64px; font-weight:800; line-height:1; }
   .date { color:#8fd6e8; font-size:22px; margin-bottom:4px; }
@@ -98,9 +101,14 @@ function showBrief(){
     gw('/v1/brief', (lat!=null)?{lat,lon}:{}).then(j=>{
       let h = '<div class="bigtime">'+esc(j.time)+'</div><div class="date">'+esc(j.date)+'</div>';
       if (j.weather) h += '<div class="wx">'+esc(j.weather)+'</div>';
-      if (j.items && j.items.length) h += j.items.map(t=>'<div class="bt">'+esc(t)+'</div>').join('');
-      else h += '<div class="dim">no items — edit brief-items.txt</div>';
-      if (!j.calendar) h += '<div class="dim" style="font-size:18px;margin-top:10px">calendar + mail: not connected yet</div>';
+      if (j.calendar && j.calendar.length)
+        h += '<div class="sec">CALENDAR</div>' + j.calendar.map(t=>'<div class="cv">'+esc(t)+'</div>').join('');
+      if (j.mail && j.mail.length)
+        h += '<div class="sec">MAIL · '+(j.mail_unread||j.mail.length)+' UNREAD</div>' + j.mail.map(t=>'<div class="mv">'+esc(t)+'</div>').join('');
+      if (j.items && j.items.length)
+        h += '<div class="sec">FOCUS</div>' + j.items.slice(0, (j.calendar||j.mail) ? 3 : 5).map(t=>'<div class="bt">'+esc(t)+'</div>').join('');
+      if (!j.calendar && !j.mail)
+        h += '<div class="dim" style="font-size:18px;margin-top:10px">calendar + mail unavailable</div>';
       page('BRIEF', h);
     }).catch(e=>page('BRIEF','<span class="warn">'+esc(e.message)+'</span>'));
   };
