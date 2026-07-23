@@ -53,10 +53,11 @@ let cfg = null;
 })();
 
 const TEMPLATES = [
-  { label:'What do I focus on right now?', q:'Given it is {time} on {date}, what single thing should I focus on right now? One pick, one reason.' },
-  { label:'One line before I walk in', q:'Give me one grounded, non-cheesy line to hold in my head before walking into a high-stakes meeting.' },
-  { label:'Reset me (2 minutes)', q:'Give me a 2-minute mental reset I can do standing up, no phone. Plain steps.' },
-  { label:'Talk me out of a dumb purchase', q:'I am about to impulse-buy something. Give me the three questions to ask before spending, fast.' }
+  { label:'OPS · What do I focus on?', m:'ops', q:'Given it is {time} on {date}, what single thing should I focus on right now? One pick, one reason.' },
+  { label:'OPS · What blocks the pilot?', m:'ops', q:'What is blocking the pilot right now, and what is the next concrete action?' },
+  { label:'ME · Line before I walk in', m:'general', q:'Give me one grounded, non-cheesy line to hold in my head before walking into a high-stakes meeting.' },
+  { label:'ME · Reset me (2 minutes)', m:'general', q:'Give me a 2-minute mental reset I can do standing up, no phone. Plain steps.' },
+  { label:'ME · Talk me out of a purchase', m:'general', q:'I am about to impulse-buy something. Give me the three questions to ask before spending, fast.' }
 ];
 
 let screen = 'home', focusIdx = 0, askIdx = 0;
@@ -75,7 +76,7 @@ function render(){
       '<div class="menu">' + HOME.map((m,i)=>'<button class="'+(i===focusIdx?'focused':'')+'">'+m.label+'</button>').join('') + '</div>' +
       '<div class="hint">▲▼ choose · ✓ select</div>';
   } else if (screen==='ask'){
-    app.innerHTML = '<h1>ASK</h1><div class="sub">titan-brain, local, private</div>' +
+    app.innerHTML = '<h1>ASK</h1><div class="sub">OPS = company brain · ME = personal · all local</div>' +
       '<div class="menu">' + TEMPLATES.map((t,i)=>'<button class="'+(i===askIdx?'focused':'')+'">'+esc(t.label)+'</button>').join('') + '</div>' +
       '<div class="hint">▲▼ choose · ✓ ask · ◀ back</div>';
   }
@@ -142,7 +143,7 @@ function ask(t){
   page('JARVIS','<span class="dim">thinking…</span>');
   const now = new Date();
   const q = t.q.replace('{time}', now.toTimeString().slice(0,5)).replace('{date}', now.toDateString());
-  gw('/v1/ask', {q}).then(j=>{
+  gw('/v1/ask', {q, m: t.m || 'ops'}).then(j=>{
     if (j.error) page('JARVIS','<span class="warn">'+esc(j.error)+'</span>');
     else { page('JARVIS', esc(j.text)); fit(); }
   }).catch(e=>page('JARVIS','<span class="warn">'+esc(e.message)+'</span>'));
