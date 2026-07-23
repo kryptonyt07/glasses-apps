@@ -49,7 +49,11 @@ let items = [];
   if (location.hash && location.hash.startsWith('#s=')) packed = location.hash.slice(3);
   if (!packed) packed = new URLSearchParams(location.search).get('s');
   if (packed){
-    try { items = JSON.parse(b64uDecode(packed)).items || []; localStorage.setItem('dd:items', JSON.stringify(items)); } catch(e){}
+    try {
+      items = JSON.parse(b64uDecode(packed)).items || [];
+      localStorage.setItem('dd:items', JSON.stringify(items));
+      localStorage.setItem('dd:src', 'config');   // user-set list — never auto-overwrite
+    } catch(e){}
   }
   if (!items.length){ try { items = JSON.parse(localStorage.getItem('dd:items')) || []; } catch(e){} }
   if (!items.length) items = ['Set today\'s 3 priorities in config.html'];
@@ -135,6 +139,17 @@ function loadLive(){
     if (j.mail_unread != null) h += '<div class="lv mail">✉ '+j.mail_unread+' unread'+
       (j.mail && j.mail.length ? ' · '+esc(j.mail[0]) : '')+'</div>';
     document.getElementById('live').innerHTML = h;
+    // adopt the gateway's focus list as the checklist unless the user set their
+    // own via config.html — makes brief-items.txt the single source of truth
+    if (localStorage.getItem('dd:src') !== 'config' && j.items && j.items.length){
+      const fresh = JSON.stringify(j.items.slice(0,5));
+      if (fresh !== JSON.stringify(items)){
+        items = j.items.slice(0,5);
+        localStorage.setItem('dd:items', fresh);
+        if (idx >= items.length) idx = 0;
+        renderFocus();
+      }
+    }
   }).catch(()=>{ /* Mac asleep — stay static */ });
 }
 
