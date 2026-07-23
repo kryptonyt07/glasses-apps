@@ -13,6 +13,9 @@
   #date { font-size:24px; color:#8fd6e8; margin-top:6px; letter-spacing:1px; }
   #wx { font-size:26px; color:#FFC24B; margin-top:16px; min-height:34px; }
   #wx.dim { color:#57616a; font-size:20px; }
+  #live { margin-top:8px; }
+  #live .lv { font-size:22px; color:#9ef3ff; padding:2px 0; }
+  #live .lv.mail { color:#cfd8df; font-size:20px; }
   #focus { margin-top:22px; flex:1; overflow:hidden; }
   #focus h2 { font-size:17px; color:#7d8790; letter-spacing:2px; margin-bottom:10px; }
   .item { font-size:25px; padding:9px 14px; border-radius:10px; border:3px solid transparent; color:#e8f6ff; }
@@ -26,6 +29,7 @@
   <div id="clock">--:--</div>
   <div id="date"></div>
   <div id="wx" class="dim">pinch ✓ on an item · hold list with ▲▼</div>
+  <div id="live"></div>
   <div id="focus"></div>
   <div class="hint" id="hint"></div>
 </div>
@@ -114,9 +118,30 @@ document.addEventListener('keydown',(e)=>{
   }
 });
 
+// live upgrade: if Jarvis's gateway config exists on this device (same origin,
+// shared localStorage) and the Mac is awake, add next event + unread count.
+// Mac off/asleep → this silently does nothing and Dash stays fully standalone.
+function loadLive(){
+  let cfg = null;
+  try { cfg = JSON.parse(localStorage.getItem('jv:cfg')); } catch(e){}
+  if (!cfg || !cfg.gw || !cfg.k) return;
+  const u = new URL(cfg.gw.replace(/\/$/,'') + '/v1/brief');
+  u.searchParams.set('k', cfg.k);
+  const ctrl = new AbortController();
+  setTimeout(()=>ctrl.abort(), 5000);
+  fetch(u, {signal: ctrl.signal}).then(r=>r.json()).then(j=>{
+    let h = '';
+    if (j.calendar && j.calendar.length) h += '<div class="lv">▸ '+esc(j.calendar[0])+'</div>';
+    if (j.mail_unread != null) h += '<div class="lv mail">✉ '+j.mail_unread+' unread'+
+      (j.mail && j.mail.length ? ' · '+esc(j.mail[0]) : '')+'</div>';
+    document.getElementById('live').innerHTML = h;
+  }).catch(()=>{ /* Mac asleep — stay static */ });
+}
+
 renderClock(); renderFocus();
 setInterval(renderClock, 15000);
 loadWeather();
+loadLive();
 </script>
 </body>
 </html>
