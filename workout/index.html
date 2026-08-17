@@ -30,7 +30,7 @@
 <div id="app">
   <div id="top">
     <div id="title">TODAY</div>
-    <div id="meta">45 min · RPE 6 · leave 3 in tank</div>
+    <div id="meta">50 min · RPE 6&ndash;6.5 · leave 3 in tank</div>
     <div id="prog"></div>
   </div>
   <div id="list"></div>
@@ -40,13 +40,37 @@
 </div>
 <script>
 'use strict';
+// Session 2026-08-17 · 50 min · RPE 6–6.5
 const BLOCKS = [
-  {h:'Warm · 8 min', items:['Bike 5 min','Ankle rocks 15','Tibs 15','90/90 ×6','Bridge ×12']},
-  {h:'Power', items:['MB chest pass 2×3']},
-  {h:'Lift', items:['Trap bar 3×5 · fast up','DB bench 3×8','Row 3×8 · pause 1s']},
-  {h:'Leg care', items:['Split squat BW 2×8 slow','Pallof 2×10 / side']},
-  {h:'Prehab', items:['Heel slides 12','Quad sets 10×5s','Calf raise 2×12','Balance 30s']},
-  {h:'Cool', items:['Hip flexor 60s','Calf 45s']},
+  {h:'Warm · 8 min', items:[
+    'Bike 5 min · nasal only',
+    'Ankle rocks 2×15',
+    'Tibs 2×15',
+    '90/90 ×6 / side',
+    'Bridge 1×12 · 3s hold']},
+  {h:'Tendon primer', items:[
+    'Spanish squat / wall sit 3×35s',
+    '↳ PAIN UNDER 3 or stop',
+    'Tibs slow 2×20 · 2s up 2s down']},
+  {h:'Power', items:['MB chest pass 2×3 (or squat jump)']},
+  {h:'Lift', items:[
+    'Trap bar 3×5 @ RPE 6',
+    '↳ +2.5–5kg ONLY if knee was 0–1 Mon',
+    'DB bench 3×8 @ RPE 6',
+    'Row 3×8 · pause 1s at chest']},
+  {h:'Single leg + core', items:[
+    'Split squat 1×8 / side BW · 3s down',
+    'Goblet squat 1×8 · 3s down @ RPE 6',
+    'Pallof 2×10 / side']},
+  {h:'Prehab + calf', items:[
+    'Heel slides 12 / leg',
+    'Quad sets 10×5s',
+    'Calf raise 2×15 · 3s up 2s hold 3s down',
+    'Soleus raise 1×15 · knees bent',
+    'Balance 30s / side']},
+  {h:'Cool · 3 min', items:[
+    'Couch hip flexor 60s / side',
+    'Calf wall 45s / side']},
 ];
 const ALL = BLOCKS.flatMap(b => b.items);
 const KEY = 'wo:done:' + new Date().toISOString().slice(0,10);
