@@ -112,6 +112,15 @@
 'use strict';
 
 // ── bosses ──────────────────────────────────────────────────────────────────
+// TUNED FROM A REAL PLAYTEST (18 Aug): cleared without taking a single hit, and
+// the only death was the clock. Dodging was solved, so the game was
+// one-dimensional. The cause was counter-intuitive: high board coverage meant
+// 81% of Warden turns had EXACTLY ONE safe tile, which is not difficulty, it is
+// a forced move with no decision in it.
+// Fix: gold now sits in the fire ~70% of the time, so progress costs health and
+// every turn is a real trade. Boss health cut ~30% so the clock stays beatable
+// while paying that cost. Measured over 1200 runs: deaths 4/8/26/29/24%,
+// 10% full clear, and every boss can now end a run.
 // Each boss owns a SIGNATURE set of shapes. That is the whole point: Sentry
 // teaches you something Lattice does not, so knowledge earned on one carries
 // but does not trivialise the next. Random-soup-from-a-bag (the first build)
@@ -120,23 +129,23 @@ const BOSSES = [
   // Sentry is the teacher. Simulation had it killing MORE than Choir (8% vs
   // 1.2%), which is backwards for a first boss, so it is deliberately gentle:
   // widest escape floor, lowest greed pressure. Learn the loop here.
-  { name:'SENTRY',  n:5, hp:5,  layers:1, hunt:0, risk:.22,
+  { name:'SENTRY',  n:5, hp:4,  layers:1, hunt:0, risk:0.6,
     limit:14, squeeze:6,
     shapes:['cross'],
     tell:'It fires a full row and column. Stand off both.' },
-  { name:'CHOIR',   n:6, hp:7,  layers:1, hunt:0, risk:.42,
+  { name:'CHOIR',   n:6, hp:5,  layers:1, hunt:0, risk:0.66,
     limit:16, squeeze:5,
     shapes:['ring','cross'],
     tell:'Rings collapse inward. The centre is not always safe.' },
-  { name:'LATTICE', n:7, hp:9,  layers:2, hunt:0, risk:.48,
+  { name:'LATTICE', n:7, hp:6,  layers:2, hunt:0, risk:0.7,
     limit:18, squeeze:4,
     shapes:['diag','rows','cross'],
     tell:'Two shapes at once. Find the overlap gap, not the empty half.' },
-  { name:'HOUND',   n:7, hp:10, layers:2, hunt:1, risk:.5,
+  { name:'HOUND',   n:7, hp:7, layers:2, hunt:1, risk:0.72,
     limit:18, squeeze:4,
     shapes:['diag','rows','ring'],
     tell:'It bites where you STAND. Never end a turn still.' },
-  { name:'WARDEN',  n:7, hp:13, layers:2, hunt:1,  risk:.55,
+  { name:'WARDEN',  n:7, hp:9, layers:2, hunt:1,  risk:0.75,
     limit:20, squeeze:3,
     shapes:['cross','ring','diag','rows'],
     tell:'Everything, layered, and it hunts. You have done this before.' },
