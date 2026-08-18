@@ -62,12 +62,21 @@ const TEMPLATES = [
 ];
 
 let screen = 'home', focusIdx = 0, askIdx = 0;
+
+// ── Back navigation (2026-08-18) ────────────────────────────────────────────
+// Meta v127 retires on-screen back buttons: navigation is the thumb +
+// middle-finger back gesture, or Escape. Without a history entry that gesture
+// exits the WHOLE APP instead of returning to the menu, which is what this did
+// from every sub-screen. Same fix line-runner already had: push one entry on
+// the way out of home, pop it on the way back.
+function enter(s){ screen = s; history.pushState({s}, ''); }
+function goHome(){ if (screen !== 'home'){ screen = 'home'; render(); } }
 const app = document.getElementById('app');
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 const HOME = [
   { label:'🌅 Brief', act: showBrief },
-  { label:'🧠 Ask Jarvis…', act: ()=>{ screen='ask'; askIdx=0; render(); } },
+  { label:'🧠 Ask Jarvis…', act: ()=>{ enter('ask'); askIdx=0; render(); } },
   { label:'📡 Status', act: showStatus }
 ];
 
@@ -100,6 +109,7 @@ function gw(path, params){
 let briefCards = [], briefIdx = 0;
 
 function showBrief(){
+  history.pushState({s:'brief'}, '');
   page('BRIEF', '<span class="dim">loading…</span>');
   const go = (lat,lon)=>{
     gw('/v1/brief', (lat!=null)?{lat,lon}:{}).then(j=>{
@@ -134,6 +144,7 @@ function renderBriefCard(){
 }
 
 function showStatus(){
+  history.pushState({s:'page'}, '');
   page('STATUS','<span class="dim">pinging…</span>');
   gw('/v1/ping').then(j=>{
     page('STATUS','gateway <span style="color:#00FF85">ONLINE</span><br>brain: '+esc(j.brain)+'<br>mac time: '+esc(j.time));
@@ -185,7 +196,21 @@ document.addEventListener('keydown',(e)=>{
   }
 });
 
+window.addEventListener('popstate', goHome);
+document.addEventListener('keydown', (e)=>{
+  if (e.key === 'Escape'){ e.preventDefault(); goHome(); }
+});
+
 render();
+
+// Offline support (2026-08-18, Meta v127 add-offline). Registered at the repo
+// root so one worker covers every app. Failure is non-fatal: no service worker
+// just means the app behaves exactly as it did before.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('../sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>

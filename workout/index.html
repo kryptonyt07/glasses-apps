@@ -107,6 +107,15 @@ document.addEventListener('keydown', (e)=>{
 });
 
 render();
+
+// Offline support (2026-08-18, Meta v127 add-offline). Registered at the repo
+// root so one worker covers every app. Failure is non-fatal: no service worker
+// just means the app behaves exactly as it did before.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('../sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
