@@ -154,7 +154,7 @@ const BOSSES = [
 const BOONS = [
   { k:'hp',     name:'VITALITY',   desc:'+1 maximum health, healed to full.' },
   { k:'heal',   name:'MEND',       desc:'Heal to full and gain a shield that eats one hit.' },
-  { k:'dmg',    name:'HEAVY HAND', desc:'Gold tiles deal 2 damage instead of 1.' },
+  { k:'dmg',    name:'HEAVY HAND', desc:'Gold on a SAFE tile deals 2 damage. Rewards the good read.' },
   { k:'reach',  name:'STRIDE',     desc:'Move up to 2 tiles in a straight line.' },
   { k:'sight',  name:'FORESIGHT',  desc:'One extra gold tile appears every turn.' },
   { k:'shield', name:'WARDING',    desc:'Gain a shield that absorbs one hit, each fight.' },
@@ -250,7 +250,18 @@ function reachable(){
 }
 
 function buildStrikes(t){
-  const cand=reachable().filter(([x,y])=>!(x===px&&y===py));
+  // REELING. Take a hit and no gold appears next turn. Measured: the run was
+  // being won by stacking health and spending it as ammunition, because every
+  // point of health converted directly into a point of damage. This cost does
+  // NOT scale with max HP, so health stops being a damage stat and a kamikaze
+  // finish now costs tempo against the clock.
+  if(reeling) return new Set();
+  // Gold always spawns ADJACENT even with Stride. Letting it spread across the
+  // full 2-tile reach made Stride actively harmful (3% clear, worse than taking
+  // nothing) because the gold drifted out of practical range. Now the extra
+  // reach is pure escape value, which is what the boon promises.
+  const adj=[[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>[px+dx,py+dy]).filter(([x,y])=>inb(x,y));
+  const cand=adj;
   if(!cand.length)return new Set();
   const risky=cand.filter(([x,y])=>t.has(idx(x,y)));
   const safe =cand.filter(([x,y])=>!t.has(idx(x,y)));
@@ -290,7 +301,7 @@ function paint(){
   }
   if(shield){const p=document.createElement('div');p.className='pip shield';hpEl.appendChild(p);}
   const left=boss.limit-turn+1;
-  turnEl.textContent='TURN '+turn+' / '+boss.limit;
+  turnEl.textContent=(reeling?'REELING · ':'')+'TURN '+turn+' / '+boss.limit;
   turnEl.style.color = left<=3 ? 'var(--danger-line)' : (left<=6 ? 'var(--gold-line)' : '');
   fillEl.style.width=Math.max(0,bossHp/boss.hp*100)+'%';
   nameEl.textContent=boss.name;
@@ -306,12 +317,20 @@ function tryMove(x,y){
 function step(nx,ny){
   busy=true;px=nx;py=ny;
   const here=idx(px,py);
-  if(strikes.has(here)){bossHp-=has('dmg')?2:1;beep(780,.09,'square',.06);}
+  if(strikes.has(here)){
+    // Doubles ONLY when the gold was on a safe tile. Unconditional double made
+    // Heavy Hand an 80% clear rate against 13% for everything else, and it paid
+    // for kamikaze. Now it pays for good reads.
+    const safeGold = !tells.has(here);
+    bossHp -= (has('dmg') && safeGold) ? 2 : 1;
+    beep(780,.09,'square',.06);
+  }
   paint();
   setTimeout(()=>{
     tells.forEach(i=>cells[i].classList.add('fire'));
+    reeling = tells.has(here);
     if(tells.has(here)){
-      if(shield){shield=false;beep(430,.16,'triangle',.07);}
+      if(shield){shield=false;reeling=false;beep(430,.16,'triangle',.07);}
       else{hp--;cells[here].classList.add('hurt');beep(105,.24,'sawtooth',.09);}
       boardEl.classList.add('shake');
       setTimeout(()=>boardEl.classList.remove('shake'),250);
@@ -334,7 +353,7 @@ function startFight(){
   buildBoard();
   px=(N-1)/2|0;py=(N-1)/2|0;
   tells=buildTells();strikes=buildStrikes(tells);
-  over=false;busy=false;
+  over=false;busy=false;reeling=false;
   tipEl.textContent=stage===0?'red = death next turn':'';
   veil.className='';paint();
 }
@@ -409,6 +428,7 @@ function intro(){
     '<br><br><b>Red tiles kill you next turn.</b> They are always shown one turn early.'+
     '<br><b>Gold tiles damage the boss</b>, and sit inside the red on purpose.'+
     '<br><br>You move one tile per turn. Standing still is a move.'+
+    '<br><b>Take a hit and no gold appears next turn.</b> Health is not ammunition.'+
     '<br><br><span style="color:var(--faint)">Every boss fights differently. Learn it, or keep dying.</span></div>'+
     '<button class="btn">BEGIN</button>';
   veil.querySelector('.btn').onclick=newRun;
