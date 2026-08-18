@@ -3,7 +3,8 @@
 # why an undeclared `reeling` shipped and broke the BEGIN button: the file
 # parsed perfectly and threw on first click. This actually RUNS the game.
 set -e
-cd "$(dirname "$0")/.."
+TOOLS="$(cd "$(dirname "$0")" && pwd)"
+cd "$TOOLS/.."
 python3 -c "
 import re
 s=open('warden/index.html').read()
@@ -11,7 +12,7 @@ js=''.join(re.findall(r'<script>(.*?)</script>', s, re.S))
 open('/tmp/_warden_game.js','w').write(js)
 "
 node -e "
-$(cat "$(dirname "$0")/dom-shim.js")
+$(cat "$TOOLS/dom-shim.js")
 $(cat /tmp/_warden_game.js)
 let f=[];
 try{ newRun(); }catch(e){ f.push('start: '+e.message); }

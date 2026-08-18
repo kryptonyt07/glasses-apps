@@ -67,8 +67,12 @@
     color:var(--faint);letter-spacing:.03em;}
   .legend i{font-style:normal;display:inline-flex;align-items:center;gap:4px;}
   .legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
-  .foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);
-    letter-spacing:.06em;}
+  .foot{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    font-size:10.5px;color:var(--faint);letter-spacing:.06em;}
+  #mute{font-family:inherit;font-size:10.5px;letter-spacing:.06em;background:transparent;
+    border:1px solid var(--edge);border-radius:6px;padding:3px 8px;color:var(--you);cursor:pointer;}
+  #mute.off{color:var(--faint);}
+  #mute:focus-visible{outline:2px solid var(--you);outline-offset:2px;}
 </style>
 </head>
 <body>
@@ -86,7 +90,8 @@
     <i><span class="dot" style="background:#A06BFF;box-shadow:0 0 0 2px #C77BFF inset"></span>hunts · circle it</i>
     <i><span class="dot" style="background:var(--you)"></span>you</i>
   </div>
-  <div class="foot"><span id="sc">1 / 5</span><span id="tip">drag anywhere to move</span></div>
+  <div class="foot"><span id="sc">1 / 5</span><span id="tip">drag anywhere to move</span>
+    <button id="mute" type="button" aria-label="toggle sound">♪ on</button></div>
 </div>
 <script>
 'use strict';
@@ -109,9 +114,9 @@ const W = 400, H = 400;
 // flinches when hit, and it visibly enrages when you choose SURGE.
 const BOSSES = [
   { name:'SENTRY', form:'eye', col:'#7BE3FF',  hp:6,  pat:['rain'],                    speed:1.00,
-    tell:'It rains straight down. Read the gaps early, they do not move.' },
+    tell:'The gap is never where you are standing. Read it early and commit.' },
   { name:'CHOIR', form:'triad', col:'#B98CFF',   hp:8,  pat:['ring','rain'],             speed:1.05,
-    tell:'Rings need you moving OUT, not sideways. Pick your gap before it blooms.' },
+    tell:'Rings bloom twice, fast then slow. One lane is open in both. Go to it.' },
   { name:'LATTICE', form:'grid', col:'#FF9BE0', hp:11, pat:['sweep','rain','spiral'],   speed:1.12,
     tell:'The beam telegraphs thin before it fires thick. That line is your warning.' },
   { name:'HOUND', form:'maw', col:'#FF8A5C',   hp:13, pat:['homing','sweep','rain'],   speed:1.18,
@@ -130,9 +135,16 @@ const BOONS = [
 ];
 
 const ACTS = [
-  { k:'strike', n:'STRIKE', dmg:1, secs:3.0, cls:'s', d:'1 damage · 3s · it shrugs this off' },
-  { k:'guard',  n:'GUARD',  dmg:0, secs:2.0, cls:'g', d:'no damage · 2s · shield, but it CLOSES IN' },
-  { k:'surge',  n:'SURGE',  dmg:3, secs:7.5, cls:'u', d:'3 damage · 7.5s · ENRAGES it' },
+  // Surge does exactly DOUBLE Strike's damage per second, and it has to. When
+  // the two were equally efficient the menu had a right answer: a simulated
+  // dodger (tools/vigil-difficulty.js) takes ~7x the hits in a ten second phase
+  // as in a five, so nobody would ever buy the long one. At 2x it clears the run
+  // in 90s against Strike's 145s, and the bet is legible — half the phases, each
+  // one far worse. The boss descending every phase is the thumb on the scale
+  // that stops the safe grind being free.
+  { k:'strike', n:'STRIKE', dmg:2, secs:5.0,  cls:'s', d:'2 damage · 5s · it shrugs this off' },
+  { k:'guard',  n:'GUARD',  dmg:0, secs:5.0,  cls:'g', d:'no damage · 5s · shield, but it CLOSES IN' },
+  { k:'surge',  n:'SURGE',  dmg:8, secs:10.0, cls:'u', d:'8 damage · 10s · ENRAGES it' },
 ];
 
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -145,27 +157,85 @@ const tipEl=document.getElementById('tip');
 let boss, stage, hp, maxHp, shield, bossHp, boons, deaths, runStart;
 let px, py, bullets, beams, phaseEnd, running, iframeUntil, lastT;
 let bx, by, bFlinch, bRage, bDying, parts;
+// The boss DRIFTS. A stationary emitter produces stationary answers: every ring
+// leaves the same corridors, every rain volley fans the same way, so one spot
+// survives the whole phase. Moving the origin means the geometry never repeats,
+// which is what actually kills camping — the pattern fixes below only widen the
+// coverage, the drift is what stops it being the same coverage twice.
+let drift=0;
+function stepBoss(dt){
+  drift += dt*(bRage?0.95:0.62);
+  bx = W/2 + Math.sin(drift)*W*(bRage?0.32:0.26) + Math.sin(drift*2.31)*W*0.06;
+  bx = Math.max(64, Math.min(W-64, bx));
+}
 deaths=parseInt(localStorage.getItem('vigil:deaths')||'0',10);
 const has=k=>boons.includes(k);
 const PR=()=> has('small') ? 4.5 : 6.5;          // hitbox radius
+
+// THE BOX. Undertale's actual idea, and the fix for "the first four bosses all
+// have spots where you don't have to move". A prober (tools/vigil-safespots.js)
+// put a player who never moves on every cell of the arena and found 64% of
+// SENTRY's board was NEVER contested: rain fell from the boss downward, so
+// everything level with or above it was a permanent seat.
+//
+// Rather than inventing attacks to spray at dead space, the dead space is gone.
+// The boss sits in an alcove; you fight in a box beneath it. This is also what
+// finally gives GUARD a price you can see. "It closes in" used to be a line of
+// text. Now the boss descends and the ceiling of your box comes down with it,
+// so guarding literally costs you floor.
+const BOX_PAD = 52;
+// It descends every single phase, whatever you picked. This is the pressure the
+// fight was missing: with only HP at stake, chipping away with the cheap short
+// attack was strictly correct and the menu had a right answer. Now grinding
+// costs you the room you grind in — nine STRIKEs at the WARDEN leaves you
+// fighting in a slot, four SURGEs leaves you most of the board. That is the
+// actual trade, and you can watch it happen.
+const BY_MAX = 200;
+const DESCENT = 9;
+const boxTop = () => by + BOX_PAD;
+function clampPlayer(){
+  const r=PR();
+  px=Math.max(r,Math.min(W-r,px));
+  py=Math.max(boxTop()+r,Math.min(H-r,py));
+}
 const SPD=()=> has('fast') ? 1.45 : 1.0;
 
 // ── audio ───────────────────────────────────────────────────────────────────
-// Generated, not loaded: no files, no wait, and the music can react to the game
-// because it IS the game. A bullet hell without sound is half a game, and the
-// pulse doing the work here is tempo — it doubles during a dodge phase and cuts
-// dead the instant you are safe, so your ears know which phase you are in
-// before your eyes do.
-let ac=null, master=null, musicOn=true, musicTimer=null, musicStep=0, musicMode='calm';
+// Rewritten 2026-08-18. The first version drove the sequence with a chain of
+// setTimeout calls and tore the whole thing down and rebuilt it on every phase
+// change, which is exactly what "the sound is broken, it turns on and off
+// repeatedly" describes: setTimeout drifts by tens of milliseconds under load
+// (and a busy bullet-hell frame IS load), and stopping the sequencer between
+// every menu and every dodge phase restarted the figure from bar one every few
+// seconds.
+//
+// This is the standard WebAudio answer instead: ONE transport that starts on
+// the first note and never stops for the rest of the run, and a scheduler that
+// runs on a coarse 25ms interval but places every event on the audio clock
+// ahead of time, so timing is sample-accurate and immune to frame hitches.
+// Changing phase now changes tempo and voicing on a transport that keeps
+// counting, so the fight music is audibly the SAME piece getting urgent.
+let ac=null, master=null, muted=false, transport=null;
+let step16=0, nextAt=0, mMode='calm', nbuf=null;
+try{ muted = localStorage.getItem('vigil:muted')==='1'; }catch(_){}
+
 function actx(){
   if(!ac){
     try{
       ac=new (window.AudioContext||window.webkitAudioContext)();
-      master=ac.createGain(); master.gain.value=0.9; master.connect(ac.destination);
+      master=ac.createGain(); master.gain.value=muted?0:0.85; master.connect(ac.destination);
     }catch(e){ ac=null; }
   }
   if(ac && ac.state==='suspended') ac.resume();
   return ac;
+}
+function noiseBuf(c){
+  if(!nbuf){
+    const n=c.sampleRate*1.0; nbuf=c.createBuffer(1,n,c.sampleRate);
+    const ch=nbuf.getChannelData(0);
+    for(let i=0;i<n;i++) ch[i]=Math.random()*2-1;
+  }
+  return nbuf;
 }
 function tone(f,d,type,v,when){
   const c=actx(); if(!c) return;
@@ -177,38 +247,121 @@ function tone(f,d,type,v,when){
   g.gain.exponentialRampToValueAtTime(.0001,t0+d);
   o.connect(g); g.connect(master||c.destination); o.start(t0); o.stop(t0+d+.02);
 }
+// ── the kit ─────────────────────────────────────────────────────────────────
+// Synthesised, not sampled, for the same reason as the melody: no files means
+// no load, and it means the beat can bend with the fight.
+function kick(t0,v){
+  const c=actx(); if(!c) return;
+  const o=c.createOscillator(), g=c.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(165,t0);
+  o.frequency.exponentialRampToValueAtTime(42,t0+0.10);
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(v||.55,t0+0.006);
+  g.gain.exponentialRampToValueAtTime(.0001,t0+0.22);
+  o.connect(g); g.connect(master); o.start(t0); o.stop(t0+0.24);
+}
+function snare(t0,v){
+  const c=actx(); if(!c) return;
+  const src=c.createBufferSource(); src.buffer=noiseBuf(c); src.loop=true;
+  const hp=c.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=1500;
+  const g=c.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(v||.16,t0+0.004);
+  g.gain.exponentialRampToValueAtTime(.0001,t0+0.13);
+  src.connect(hp); hp.connect(g); g.connect(master);
+  src.start(t0); src.stop(t0+0.15);
+  // a little body under the hiss, or it reads as a click rather than a hit
+  const o=c.createOscillator(), og=c.createGain();
+  o.type='triangle'; o.frequency.setValueAtTime(196,t0);
+  og.gain.setValueAtTime(0.0001,t0);
+  og.gain.exponentialRampToValueAtTime((v||.16)*0.5,t0+0.004);
+  og.gain.exponentialRampToValueAtTime(.0001,t0+0.09);
+  o.connect(og); og.connect(master); o.start(t0); o.stop(t0+0.11);
+}
+function hat(t0,v,open){
+  const c=actx(); if(!c) return;
+  const src=c.createBufferSource(); src.buffer=noiseBuf(c); src.loop=true;
+  const hp=c.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=7200;
+  const g=c.createGain(); const d=open?0.14:0.035;
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(v||.055,t0+0.002);
+  g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+  src.connect(hp); hp.connect(g); g.connect(master);
+  src.start(t0); src.stop(t0+d+0.02);
+}
+// impact noise, kept from the old engine because the hit and the kill need a
+// crunch under the tone. Same shared buffer as the kit.
 function noise(d,v){
   const c=actx(); if(!c) return;
-  const n=Math.floor(c.sampleRate*d), buf=c.createBuffer(1,n,c.sampleRate), ch=buf.getChannelData(0);
-  for(let i=0;i<n;i++) ch[i]=(Math.random()*2-1)*(1-i/n);
-  const src=c.createBufferSource(); src.buffer=buf;
-  const g=c.createGain(); g.gain.value=v||.08;
-  const f=c.createBiquadFilter(); f.type='lowpass'; f.frequency.value=1400;
-  src.connect(f); f.connect(g); g.connect(master||c.destination); src.start();
+  const t0=c.currentTime;
+  const src=c.createBufferSource(); src.buffer=noiseBuf(c); src.loop=true;
+  const lp=c.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=1600;
+  const g=c.createGain();
+  g.gain.setValueAtTime(Math.max(.0002,v||.08),t0);
+  g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+  src.connect(lp); lp.connect(g); g.connect(master);
+  src.start(t0); src.stop(t0+d+.02);
 }
 function beep(f,d,t,v){ tone(f,d,t,v); }
 
-// A two-bar minor figure. Same notes in both modes; only tempo and voicing
-// change, so the transition reads as the SAME music getting urgent rather than
-// a different track starting.
+// A two-bar minor figure over a kit. Same notes in both modes; tempo, voicing
+// and how hard the drums work are what change, so the transition reads as the
+// same music getting urgent rather than a different track starting.
 const SCALE=[110,130.81,146.83,164.81,196,220,261.63,293.66];
 const FIG=[0,2,4,2,5,4,2,0, 0,3,5,3,6,5,3,0];
-function musicTick(){
-  if(!musicOn) return;
-  const fast = musicMode==='fight';
-  const i = musicStep % FIG.length;
+const BPM={calm:84, fight:150, off:110};
+function sixteenth(){ return 60/BPM[mMode]/4; }
+
+function playStep(i16, t0){
+  if(mMode==='off') return;
+  const fast = mMode==='fight';
+  const i = i16 % FIG.length;
   const root = SCALE[FIG[i]];
-  if(i%4===0) tone(root/2, fast?.28:.5, 'triangle', fast?.055:.035);
-  if(fast || i%2===0) tone(root*2, fast?.10:.16, 'square', fast?.022:.013);
-  if(fast && i%8===4) noise(.06,.05);
-  musicStep++;
-  musicTimer=setTimeout(musicTick, fast?125:230);
+  // bass + lead
+  if(i%4===0) tone(root/2, fast?.26:.46, 'triangle', fast?.05:.032, t0);
+  if(fast || i%2===0) tone(root*2, fast?.09:.15, 'square', fast?.02:.012, t0);
+  // kit: a half-time pulse when you are choosing, a driving beat when you are
+  // being shot at. The backbeat is the thing your ears lock onto, so it stays
+  // on 4 and 12 in both and only the density around it moves.
+  const b=i%16;
+  if(fast){
+    if(b===0||b===6||b===10) kick(t0, b===0?.6:.42);
+    if(b===4||b===12) snare(t0,.17);
+    if(b%2===0) hat(t0, b%4===0?.05:.035, b===14);
+    if(b===15) snare(t0,.09);
+  } else {
+    if(b===0) kick(t0,.4);
+    if(b===8) kick(t0,.26);
+    if(b===12) snare(t0,.09);
+    if(b%4===0) hat(t0,.026);
+  }
 }
+
+function scheduler(){
+  const c=actx(); if(!c) return;
+  if(nextAt < c.currentTime) nextAt = c.currentTime + 0.05;
+  while(nextAt < c.currentTime + 0.12){
+    playStep(step16, nextAt);
+    nextAt += sixteenth();
+    step16++;
+  }
+}
+// mode only retunes a transport that keeps running; it never restarts it
 function music(mode){
-  musicMode=mode;
-  if(musicTimer) clearTimeout(musicTimer);
-  if(mode==='off'){ musicTimer=null; return; }
-  musicTick();
+  mMode = mode;
+  const c=actx(); if(!c) return;
+  if(!transport){ nextAt=c.currentTime+0.06; transport=setInterval(scheduler,25); scheduler(); }
+}
+function setMuted(m){
+  muted=m;
+  try{ localStorage.setItem('vigil:muted', m?'1':'0'); }catch(_){}
+  if(master && ac){
+    master.gain.cancelScheduledValues(ac.currentTime);
+    master.gain.setTargetAtTime(m?0:0.85, ac.currentTime, 0.02);
+  }
+  const b=document.getElementById('mute');
+  if(b){ b.textContent = m?'♪ off':'♪ on'; b.classList.toggle('off', m); }
 }
 
 function fit(){
@@ -235,8 +388,7 @@ cv.addEventListener('pointerdown',e=>{
 cv.addEventListener('pointermove',e=>{
   if(!dragging||(!running&&!attract))return;
   const [x,y]=toLocal(e);
-  px=Math.max(PR(),Math.min(W-PR(), px+(x-lastX)*SPD()));
-  py=Math.max(PR(),Math.min(H-PR(), py+(y-lastY)*SPD()));
+  px+=(x-lastX)*SPD(); py+=(y-lastY)*SPD(); clampPlayer();
   lastX=x; lastY=y; e.preventDefault();
 });
 ['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>{dragging=false;}));
@@ -251,6 +403,13 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
+// Sound off has to be one tap, not a menu. M on a laptop, the ♪ under the board
+// on a phone, and the choice survives a reload.
+const muteBtn=document.getElementById('mute');
+if(muteBtn) muteBtn.onclick=()=>{ setMuted(!muted); muteBtn.blur(); };
+document.addEventListener('keydown',e=>{ if(e.key==='m'||e.key==='M') setMuted(!muted); });
+setMuted(muted);
+
 // ── patterns ────────────────────────────────────────────────────────────────
 // Every attack TELEGRAPHS. That is the one rule carried over from the grid
 // version and it is what makes dying feel like your fault rather than the
@@ -260,29 +419,56 @@ function shot(x,y,vx,vy,r,kind){ bullets.push({x,y,vx,vy,r:r||5,kind:kind||'stra
 function emit(kind, t, sp){
   const R=Math.random;
   if(kind==='rain'){
-    const gap=R()*(W-120)+60;
-    for(let x=12;x<W;x+=34){
+    // The gap is placed in the half of the box FURTHEST from you most of the
+    // time. A uniformly random gap lands under your feet often enough that
+    // standing still was a live strategy; now every volley is a commute.
+    const far = px < W/2 ? [W*0.52, W-70] : [70, W*0.48];
+    const gap = R()<0.72 ? far[0]+R()*(far[1]-far[0]) : 60+R()*(W-120);
+    // The column phase JITTERS per volley. On a fixed 34px lattice the strip
+    // just under the ceiling was still free, because up there the columns have
+    // not splayed yet and the 17px between two of them is wider than you are.
+    // Fixed columns mean fixed lanes; shifting them means no lane persists.
+    const x0=12+R()*34;
+    for(let x=x0;x<W;x+=34){
       if(Math.abs(x-gap)<46) continue;           // a real gap, always
-      shot(x, by+18, (x-bx)*0.16, (70+22*sp)*sp, 5, 'rain');
+      // Splay TAPERS to nothing at the walls. With a flat splay the outermost
+      // columns drifted off-screen before they ever reached your level, which
+      // is why both bottom corners measured as free seats.
+      const off=(x-bx)/(W*0.5);
+      shot(x, by+18, (x-bx)*0.16*Math.max(0,1-off*off), (70+22*sp)*sp, 5, 'rain');
     }
   } else if(kind==='ring'){
-    const n=18, off=R()*Math.PI*2, hole=Math.floor(R()*n);
-    for(let i=0;i<n;i++){
-      if(i===hole||i===(hole+1)%n) continue;      // the gap you aim for
-      const a=off+i/n*Math.PI*2;
-      shot(bx,by,Math.cos(a)*68*sp,Math.sin(a)*68*sp,5,'burst');
+    // TWO interleaved rings at different speeds. One ring is a sieve at range:
+    // 18 shots expanded to the floor of the box sit ~105px apart by the time
+    // they arrive, which is an open door wherever you happen to be standing.
+    // The fast ring fills the slow ring's doors. The hole is aligned in both,
+    // so there is exactly one lane and you have to go and stand in it.
+    const n=16, off=R()*Math.PI*2, hole=off+Math.floor(R()*n)/n*Math.PI*2;
+    for(let pass=0;pass<2;pass++){
+      const rot=off+pass*Math.PI/n, spd=(pass?95:64)*sp;
+      for(let i=0;i<n;i++){
+        const a=rot+i/n*Math.PI*2;
+        const d=Math.abs(((a-hole)+Math.PI*3)%(Math.PI*2)-Math.PI);
+        if(d < Math.PI/n*1.4) continue;          // the gap you aim for
+        shot(bx,by,Math.cos(a)*spd,Math.sin(a)*spd,4.8,'burst');
+      }
     }
   } else if(kind==='spiral'){
-    const a=t*2.4;
-    for(let k=0;k<2;k++){
-      const ang=a+k*Math.PI;
+    // three arms, not two: two arms sweep past a static player without ever
+    // sharing a radius with them.
+    const a=t*2.7*(bRage?1.2:1);
+    for(let k=0;k<3;k++){
+      const ang=a+k*Math.PI*2/3;
       shot(bx,by,Math.cos(ang)*74*sp,Math.sin(ang)*74*sp,4.5,'burst');
     }
   } else if(kind==='homing'){
     bullets.push({x:bx,y:by,vx:0,vy:0,r:6.5,home:true,kind:'homing',spd:52*sp,born:performance.now()});
   } else if(kind==='sweep'){
-    // telegraph first, fire after: a thin line, then the beam
-    const vert=R()<.5, pos=40+R()*(W-80);
+    // telegraph first, fire after: a thin line, then the beam. A horizontal
+    // beam is aimed INSIDE the box; it used to be able to pick a row up in the
+    // alcove, where it swept empty space and cost you nothing.
+    const vert=R()<.5, top=boxTop();
+    const pos = vert ? 40+R()*(W-80) : top+22+R()*(H-top-44);
     beams.push({vert,pos,at:performance.now()+900,fired:0});
   }
 }
@@ -334,10 +520,11 @@ function frame(now){
 
   // keyboard movement
   const k=265*SPD()*dt;
-  if(keys.ArrowLeft) px=Math.max(PR(),px-k);
-  if(keys.ArrowRight)px=Math.min(W-PR(),px+k);
-  if(keys.ArrowUp)   py=Math.max(PR(),py-k);
-  if(keys.ArrowDown) py=Math.min(H-PR(),py+k);
+  if(keys.ArrowLeft) px-=k;
+  if(keys.ArrowRight)px+=k;
+  if(keys.ArrowUp)   py-=k;
+  if(keys.ArrowDown) py+=k;
+  clampPlayer();
 
   // spawn on a cadence that ramps through the phase
   // INTENSITY CURVE. A flat spawn rate made STRIKE free: three seconds was not
@@ -353,11 +540,15 @@ function frame(now){
   // Net effect: Strike is a burst you must actually dodge, Surge is an
   // endurance run that gets worse the longer you are in it. Same total damage
   // per second, completely different risk shape. That is the decision.
+  stepBoss(dt);
   spawnAcc+=dt;
   const prog = Math.min(1, t/curSecs);
-  const open = Math.max(0, 1 - t/0.9);            // hard for the first ~0.9s
-  const ramp = Math.pow(prog, 1.7) * (curSecs/3); // long phases end brutally
-  const intensity = (1 + open*1.15 + ramp*1.15) * (bRage?1.22:1);
+  const open = Math.max(0, 1 - t/1.15);           // hard for the first ~1.15s
+  // CAPPED. This used to be curSecs/3, which is fine at 3s and lethal nonsense
+  // at 10: the final second of a Surge would have emitted ~14 volleys a second.
+  // The ceiling keeps a long phase the worst one without making it a coin flip.
+  const ramp = Math.pow(prog, 1.7) * Math.min(2.0, 0.55 + curSecs*0.15);
+  const intensity = (1 + open*2.2 + ramp*1.15) * (bRage?1.22:1);
   const rate = 0.42 / (boss.speed * intensity);
   if(spawnAcc>rate){
     spawnAcc=0;
@@ -434,8 +625,28 @@ function burstParts(x,y,c,n){
     parts.push({x,y,vx:Math.cos(a)*(1+Math.random()*2),vy:Math.sin(a)*(1+Math.random()*2),c,t:now}); }
 }
 
+// The box has to be VISIBLE or the ceiling coming down after a GUARD is just a
+// wall you bump into. Corner ticks rather than a full frame: it reads as a
+// container without competing with the bullets for attention.
+function drawBox(){
+  const bt=boxTop();
+  ctx.fillStyle='rgba(122,140,170,0.028)'; ctx.fillRect(0,bt,W,H-bt);
+  ctx.strokeStyle = bRage ? 'rgba(255,107,107,.42)' : 'rgba(160,107,255,.30)';
+  ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(0,bt+0.5); ctx.lineTo(W,bt+0.5); ctx.stroke();
+  ctx.strokeStyle = bRage ? 'rgba(255,107,107,.85)' : 'rgba(160,107,255,.7)';
+  ctx.lineWidth=2.5;
+  for(const x of [0,W]){
+    const d=x?-1:1;
+    ctx.beginPath(); ctx.moveTo(x+d*1.5,bt+22); ctx.lineTo(x+d*1.5,bt+1.5);
+    ctx.lineTo(x+d*24,bt+1.5); ctx.stroke();
+  }
+  ctx.lineWidth=1;
+}
+
 function draw(t){
   ctx.clearRect(0,0,W,H);
+  drawBox();
   drawBoss(performance.now());
   const inv = performance.now()<iframeUntil;
 
@@ -445,12 +656,12 @@ function draw(t){
       const p=1-Math.max(0,(bm.at-now)/900);
       ctx.strokeStyle=`rgba(255,74,46,${.25+p*.5})`; ctx.lineWidth=1+p*3;
       ctx.beginPath();
-      if(bm.vert){ctx.moveTo(bm.pos,0);ctx.lineTo(bm.pos,H);}else{ctx.moveTo(0,bm.pos);ctx.lineTo(W,bm.pos);}
+      if(bm.vert){ctx.moveTo(bm.pos,boxTop());ctx.lineTo(bm.pos,H);}else{ctx.moveTo(0,bm.pos);ctx.lineTo(W,bm.pos);}
       ctx.stroke();
     } else {
       const a=1-(now-bm.fired)/260;
       ctx.fillStyle=`rgba(255,107,74,${a})`;
-      if(bm.vert) ctx.fillRect(bm.pos-9,0,18,H); else ctx.fillRect(0,bm.pos-9,W,18);
+      if(bm.vert) ctx.fillRect(bm.pos-9,boxTop(),18,H-boxTop()); else ctx.fillRect(0,bm.pos-9,W,18);
     }
   }
   // Each threat is drawn as WHAT IT IS, because each wants a different response
@@ -490,14 +701,19 @@ function draw(t){
 // ── phases ──────────────────────────────────────────────────────────────────
 let curSecs=3, spawnAcc=0;
 
+const phaseLen = a => Math.max(1.5, a.secs*(has('brief')?0.8:1));
+
 function showMenu(){
   running=false; phEl.textContent='YOUR MOVE';
   const berserk=has('dmg')&&hp<=maxHp/2;
   menuEl.className='on';
-  menuEl.innerHTML='<div class="lead">'+(berserk?'BERSERK · damage doubled':'choose')+'</div>'+
+  const room=Math.round((H-boxTop())/(H-96-BOX_PAD)*100);
+  menuEl.innerHTML='<div class="lead">'+(berserk?'BERSERK · damage doubled':'choose')+
+    '<br><span style="color:'+(room<62?'var(--tell)':'var(--faint)')+'">room '+room+'%'+
+    (room<100?' · it has descended':'')+'</span></div>'+
     ACTS.map((a,i)=>{
       const d=a.dmg*(berserk&&a.dmg?2:1);
-      const s=Math.max(1.2,a.secs-(has('brief')?1:0));
+      const s=phaseLen(a);
       return '<button class="act '+a.cls+'" data-i="'+i+'"><b>'+a.n+'</b><span>'+
         (a.dmg? d+' damage · ':'')+s.toFixed(1)+'s'+(a.k==='guard'?' · regain a shield':'')+'</span></button>';
     }).join('');
@@ -515,10 +731,10 @@ function showMenu(){
     // So the menu is no longer a spreadsheet: you are choosing how angry to
     // make it, and you can see the answer before you have to survive it.
     bRage = (a.k==='surge');
-    if(a.k==='guard'){ shield=true; by=Math.min(150, by+16); }
+    if(a.k==='guard'){ shield=true; by=Math.min(BY_MAX, by+16); }   // on top of the per-phase descent
     strikeAnim(dmg, ()=>{
       if(bossHp<=0){ return killBoss(); }
-      startPhase(Math.max(1.2,a.secs-(has('brief')?1:0)));
+      startPhase(phaseLen(a));
     });
   });
   paintHud();
@@ -565,6 +781,7 @@ function killBoss(){
 
 function startPhase(secs){
   menuEl.className=''; phEl.textContent='SURVIVE';
+  by=Math.min(BY_MAX, by+DESCENT);
   curSecs=secs; spawnAcc=0; bullets=[]; beams=[];
   px=W/2; py=H*0.72; iframeUntil=performance.now()+400;
   // Seed one volley immediately. Starting on an empty board is what let a short
@@ -656,9 +873,11 @@ function attractLoop(now){
   for(const b of bullets){ b.x+=b.vx*dt; b.y+=b.vy*dt; }
   bullets=bullets.filter(b=>b.y<H+30);
   const k=265*dt;
-  if(keys.ArrowLeft)px=Math.max(PR(),px-k); if(keys.ArrowRight)px=Math.min(W-PR(),px+k);
-  if(keys.ArrowUp)py=Math.max(PR(),py-k);  if(keys.ArrowDown)py=Math.min(H-PR(),py+k);
+  if(keys.ArrowLeft)px-=k; if(keys.ArrowRight)px+=k;
+  if(keys.ArrowUp)py-=k;  if(keys.ArrowDown)py+=k;
+  clampPlayer();
   ctx.clearRect(0,0,W,H);
+  drawBox(); drawBoss(now);
   ctx.fillStyle='rgba(255,107,74,.45)';
   for(const b of bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill(); }
   ctx.fillStyle='#4FE8C4';
@@ -677,7 +896,8 @@ function intro(){
     '<b>Drag anywhere.</b> Trackpad or thumb, not the arrow keys.<br>'+
     '<span style="color:var(--faint)">Arrows work, but dragging is far better. Try it now.</span><br><br>'+
     'You pick an attack with no timer on you. Then you survive, in real time, '+
-    'for exactly as long as that attack costs.<br><br>'+
+    'for exactly as long as that attack costs. Five seconds, or ten.<br><br>'+
+    'You fight inside the box under it. <b>Guard and the box shrinks.</b><br><br>'+
     '<span style="color:var(--faint)">Everything telegraphs before it fires.</span>'+
     '</div><button class="btn">BEGIN</button>';
   veil.querySelector('.btn').onclick=()=>{ attract=false; newRun(); };
