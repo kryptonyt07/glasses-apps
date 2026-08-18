@@ -167,7 +167,7 @@ const fillEl=document.getElementById('bossfill'), nameEl=document.getElementById
 const stageEl=document.getElementById('stage'), tipEl=document.getElementById('tip');
 
 let N, cells, px, py, hp, maxHp, shield, bossHp, boss, stage, turn;
-let tells, strikes, busy, over, boons, deaths, runTurns;
+let tells, strikes, busy, over, boons, deaths, runTurns, reeling;
 deaths = parseInt(localStorage.getItem('warden:deaths')||'0',10);
 const bestRun = parseInt(localStorage.getItem('warden:bestrun')||'0',10);
 
