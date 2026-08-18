@@ -17,14 +17,48 @@ $(cat "$TOOLS/dom-shim.js")
 let RAF=[]; global.requestAnimationFrame=f=>{RAF.push(f);return RAF.length;};
 global.cancelAnimationFrame=()=>{};
 global.setInterval=()=>0; global.clearInterval=()=>{}; global.setTimeout=(f)=>0;
-global.performance={now:()=>Date.now()};
+// A FAKE clock. With the real one, pumping frames in a tight loop never
+// advances time past phaseEnd, so a phase could never actually finish and the
+// most important path in the game went untested.
+let T=1000; global.performance={now:()=>T};
+const tick=ms=>{T+=ms;};
 $(cat /tmp/_vigil_game.js)
 let f=[];
-const pump=n=>{ for(let i=0;i<n;i++){ const q=RAF; RAF=[]; if(!q.length) break;
-                  for(const fn of q){ try{ fn(performance.now()); }catch(e){ throw e; } } } };
+const pump=(n,step)=>{ for(let i=0;i<n;i++){ const q=RAF; RAF=[]; if(!q.length) break;
+                  tick(step==null?16:step);
+                  for(const fn of q){ fn(performance.now()); } } };
 try{ intro(); pump(30); }catch(e){ f.push('intro: '+e.message); }
 try{ newRun(); }catch(e){ f.push('newRun: '+e.message); }
-try{ for(const a of ACTS){ startPhase(phaseLen(a)); pump(400); } }catch(e){ f.push('phases: '+e.message); }
+// invuln for the harness only: the dummy never moves, so without it every
+// phase ends in death and nothing past frame() is ever reached.
+const immortal=()=>{ iframeUntil=1e15; };
+try{ for(const a of ACTS){ pending=a; startPhase(phaseLen(a)); immortal(); pump(900); } }
+catch(e){ f.push('phases: '+e.message); }
+
+// THE ORDERING. Damage used to land the moment you picked, which let SURGE kill
+// a small boss before its dodge phase ever ran. The whole fight now hangs on
+// the blow landing at the END, so assert it rather than trusting it.
+try{
+  stage=0; beginBoss();
+  const surge=ACTS.find(a=>a.k==='surge'), hp0=bossHp;
+  pending=surge; startPhase(phaseLen(surge)); immortal();
+  pump(120);
+  if(bossHp!==hp0) f.push('damage landed DURING the phase: '+hp0+' -> '+bossHp);
+  immortal();
+  pump(1200);                       // run past phaseEnd into endPhase
+  pump(200);                        // and through strikeAnim
+  if(bossHp>=hp0) f.push('damage never landed after the phase: still '+bossHp);
+  if(pending!==null) f.push('pending action was not cleared');
+}catch(e){ f.push('ordering: '+e.message); }
+
+// No boss may fall to a single SURGE, or the big swing skips the fight.
+try{
+  const surge=ACTS.find(a=>a.k==='surge'), strike=ACTS.find(a=>a.k==='strike');
+  for(const b of BOSSES){
+    if(b.hp<=surge.dmg) f.push(b.name+' dies to one SURGE ('+b.hp+'hp vs '+surge.dmg+')');
+    if(Math.ceil(b.hp/strike.dmg)>14) f.push(b.name+' is a '+Math.ceil(b.hp/strike.dmg)+'-phase STRIKE grind');
+  }
+}catch(e){ f.push('hp shape: '+e.message); }
 try{ for(const b of ['hp','dmg','small','fast','ward','brief']){
        boons=[b]; newRun(); startPhase(phaseLen(ACTS[0])); pump(200); }
    }catch(e){ f.push('boon '+e.message); }

@@ -113,15 +113,15 @@ const W = 400, H = 400;
 // it. The boss now sits in the arena, every projectile leaves ITS body, it
 // flinches when hit, and it visibly enrages when you choose SURGE.
 const BOSSES = [
-  { name:'SENTRY', form:'eye', col:'#7BE3FF',  hp:6,  pat:['rain'],                    speed:1.00,
+  { name:'SENTRY', form:'eye', col:'#7BE3FF',  hp:10,  pat:['rain'],                    speed:1.00,
     tell:'The gap is never where you are standing. Read it early and commit.' },
-  { name:'CHOIR', form:'triad', col:'#B98CFF',   hp:8,  pat:['ring','rain'],             speed:1.05,
+  { name:'CHOIR', form:'triad', col:'#B98CFF',   hp:14,  pat:['ring','rain'],             speed:1.05,
     tell:'Rings bloom twice, fast then slow. One lane is open in both. Go to it.' },
-  { name:'LATTICE', form:'grid', col:'#FF9BE0', hp:11, pat:['sweep','rain','spiral'],   speed:1.12,
+  { name:'LATTICE', form:'grid', col:'#FF9BE0', hp:20, pat:['sweep','rain','spiral'],   speed:1.12,
     tell:'The beam telegraphs thin before it fires thick. That line is your warning.' },
-  { name:'HOUND', form:'maw', col:'#FF8A5C',   hp:13, pat:['homing','sweep','rain'],   speed:1.18,
+  { name:'HOUND', form:'maw', col:'#FF8A5C',   hp:26, pat:['homing','sweep','rain'],   speed:1.18,
     tell:'Homing shots turn slowly. Circle them, never outrun them in a line.' },
-  { name:'WARDEN', form:'crown', col:'#A06BFF',  hp:17, pat:['spiral','ring','sweep','homing','rain'], speed:1.25,
+  { name:'WARDEN', form:'crown', col:'#A06BFF',  hp:33, pat:['spiral','ring','sweep','homing','rain'], speed:1.25,
     tell:'Everything at once. You already know each piece.' },
 ];
 
@@ -142,9 +142,9 @@ const ACTS = [
   // in 90s against Strike's 145s, and the bet is legible — half the phases, each
   // one far worse. The boss descending every phase is the thumb on the scale
   // that stops the safe grind being free.
-  { k:'strike', n:'STRIKE', dmg:2, secs:5.0,  cls:'s', d:'2 damage · 5s · it shrugs this off' },
+  { k:'strike', n:'STRIKE', dmg:3, secs:5.0,  cls:'s', d:'3 damage · 5s · it shrugs this off' },
   { k:'guard',  n:'GUARD',  dmg:0, secs:5.0,  cls:'g', d:'no damage · 5s · shield, but it CLOSES IN' },
-  { k:'surge',  n:'SURGE',  dmg:8, secs:10.0, cls:'u', d:'8 damage · 10s · ENRAGES it' },
+  { k:'surge',  n:'SURGE',  dmg:9, secs:10.0, cls:'u', d:'9 damage · 10s · ENRAGES it' },
 ];
 
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -699,7 +699,7 @@ function draw(t){
 }
 
 // ── phases ──────────────────────────────────────────────────────────────────
-let curSecs=3, spawnAcc=0;
+let curSecs=3, spawnAcc=0, pending=null, used={strike:0,guard:0,surge:0};
 
 const phaseLen = a => Math.max(1.5, a.secs*(has('brief')?0.8:1));
 
@@ -715,7 +715,8 @@ function showMenu(){
       const d=a.dmg*(berserk&&a.dmg?2:1);
       const s=phaseLen(a);
       return '<button class="act '+a.cls+'" data-i="'+i+'"><b>'+a.n+'</b><span>'+
-        (a.dmg? d+' damage · ':'')+s.toFixed(1)+'s'+(a.k==='guard'?' · regain a shield':'')+'</span></button>';
+        (a.dmg? d+' damage · ':'')+s.toFixed(1)+'s'+
+        (a.k==='guard'?' · regain a shield':' · lands if you live')+'</span></button>';
     }).join('');
   menuEl.querySelectorAll('.act').forEach(el=>el.onclick=()=>{
     const a=ACTS[+el.dataset.i];
@@ -732,10 +733,14 @@ function showMenu(){
     // make it, and you can see the answer before you have to survive it.
     bRage = (a.k==='surge');
     if(a.k==='guard'){ shield=true; by=Math.min(BY_MAX, by+16); }   // on top of the per-phase descent
-    strikeAnim(dmg, ()=>{
-      if(bossHp<=0){ return killBoss(); }
-      startPhase(phaseLen(a));
-    });
+    // YOU PAY FIRST. Damage used to land the instant you picked, which meant
+    // choosing SURGE against a small boss killed it before the dodge phase ever
+    // ran: "the first 2 bosses instakilled using surge". You skipped the game.
+    // Now the attack is a wind-up. You commit to the seconds, you survive them,
+    // and THEN it lands — so every boss dies at the end of its hardest phase
+    // instead of in the menu, and dying mid-swing means you never landed it.
+    pending = a; used[a.k]++;
+    startPhase(phaseLen(a));
   });
   paintHud();
 }
@@ -780,7 +785,7 @@ function killBoss(){
 }
 
 function startPhase(secs){
-  menuEl.className=''; phEl.textContent='SURVIVE';
+  menuEl.className=''; phEl.textContent = pending ? 'HOLDING '+pending.n : 'SURVIVE';
   by=Math.min(BY_MAX, by+DESCENT);
   curSecs=secs; spawnAcc=0; bullets=[]; beams=[];
   px=W/2; py=H*0.72; iframeUntil=performance.now()+400;
@@ -795,7 +800,13 @@ function startPhase(secs){
 function endPhase(){
   running=false; music('calm'); bullets=[]; beams=[];
   ctx.clearRect(0,0,W,H);
-  showMenu();
+  const a=pending; pending=null;
+  if(!a) return showMenu();
+  // recomputed, not carried from the menu: if the phase dropped you to half
+  // health the swing you were holding lands BERSERK. It can only ever be
+  // better than the number you were shown.
+  const dmg=a.dmg*(has('dmg')&&hp<=maxHp/2&&a.dmg?2:1);
+  strikeAnim(dmg, ()=>{ if(bossHp<=0) return killBoss(); showMenu(); });
 }
 
 function paintHud(){
@@ -829,15 +840,31 @@ function endRun(won){
   running=false; music('off'); veil.className='on';
   const mins=((performance.now()-runStart)/1000).toFixed(0);
   if(won){
+    // Describe the run back rather than printing a fixed challenge. The old
+    // screen said "now clear it using only SURGE" to someone who had just
+    // cleared it spamming only SURGE, which is a game that is not watching.
+    const tot=used.strike+used.guard+used.surge;
+    const top=used.surge>=used.strike?'surge':'strike';
+    const lop=tot && Math.max(used.strike,used.surge)/tot>=0.85;
+    const next = lop
+      ? (top==='surge'
+          ? 'You never blinked: '+used.surge+' surges, '+used.strike+' strikes. Now clear it without a single SURGE.'
+          : 'You ground it down: '+used.strike+' strikes, '+used.surge+' surges. Now clear it on SURGE alone.')
+      : (used.guard===0
+          ? 'You never guarded once. Try it, and watch the ceiling come down.'
+          : 'A mixed run. Now try it without ever guarding.');
     veil.innerHTML='<h2 style="color:var(--you)">THE WARDEN FALLS</h2>'+
-      '<div class="r">All five in <b>'+mins+'s</b>.<br>Deaths: <b>'+deaths+'</b>'+
-      '<br><br>Now clear it using only SURGE.</div><button class="btn">RUN AGAIN</button>';
+      '<div class="r">All five in <b>'+mins+'s</b>.<br>'+
+      '<span style="color:var(--faint)">'+used.strike+' strike · '+used.guard+
+      ' guard · '+used.surge+' surge · '+deaths+' deaths</span>'+
+      '<br><br>'+next+'</div><button class="btn">RUN AGAIN</button>';
   }else{
     deaths++; localStorage.setItem('vigil:deaths',String(deaths));
     veil.innerHTML='<h2 style="color:var(--tell)">YOU DIED</h2>'+
       '<div class="r">Fell to <b>'+boss.name+'</b>, stage <b>'+(stage+1)+'/'+BOSSES.length+'</b>.'+
       '<br><br><b>'+boss.tell+'</b><br><br>'+
-      (bossHp<=2?'It was nearly done. That is the fight.'
+      (bossHp<=3?'It was nearly done. That is the fight.'
+        : pending&&pending.k==='surge'?'You were mid-SURGE. The blow only lands if you live to throw it.'
         :'Surge buys damage with time. Time is what killed you.')+
       '<br><br><span style="color:var(--faint)">Deaths: '+deaths+'</span></div>'+
       '<button class="btn">RUN AGAIN</button>';
@@ -846,7 +873,7 @@ function endRun(won){
 }
 
 function beginBoss(){
-  boss=BOSSES[stage]; bossHp=boss.hp;
+  boss=BOSSES[stage]; bossHp=boss.hp; pending=null;
   bx=W/2; by=96; bFlinch=0; bRage=false; bDying=0; parts=[];
   veil.className=''; bullets=[]; beams=[];
   tipEl.textContent = (()=>{ let seen=false; try{seen=localStorage.getItem('vigil:dragged')==='1';}catch(_){}
@@ -856,6 +883,7 @@ function beginBoss(){
 
 function newRun(){
   stage=0; maxHp=3; hp=3; shield=false; boons=[]; runStart=performance.now();
+  used={strike:0,guard:0,surge:0};
   beginBoss();
 }
 
@@ -896,7 +924,8 @@ function intro(){
     '<b>Drag anywhere.</b> Trackpad or thumb, not the arrow keys.<br>'+
     '<span style="color:var(--faint)">Arrows work, but dragging is far better. Try it now.</span><br><br>'+
     'You pick an attack with no timer on you. Then you survive, in real time, '+
-    'for exactly as long as that attack costs. Five seconds, or ten.<br><br>'+
+    'for exactly as long as that attack costs. Five seconds, or ten.<br>'+
+    '<b>The blow lands when the phase ends</b>, so dying mid-swing lands nothing.<br><br>'+
     'You fight inside the box under it. <b>Guard and the box shrinks.</b><br><br>'+
     '<span style="color:var(--faint)">Everything telegraphs before it fires.</span>'+
     '</div><button class="btn">BEGIN</button>';
