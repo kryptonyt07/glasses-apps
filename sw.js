@@ -33,7 +33,9 @@ const SHELLS = [
   './jarvis/',
   './jarvis/index.html',
   './scratch/',
-  './scratch/index.html'
+  './scratch/index.html',
+  './clip/',
+  './clip/index.html'
 ];
 
 self.addEventListener('install', (e) => {

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#00E5FF">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Clip to Mac</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{background:#0A0D11;color:#E8EDF3;min-height:100dvh;padding:22px 18px 34px;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;}
+  h1{font-size:23px;color:#00E5FF;letter-spacing:1.5px;}
+  .sub{color:#7d8790;font-size:15px;margin:3px 0 18px;}
+  textarea{width:100%;min-height:180px;background:#12171D;color:#E8EDF3;font-size:17px;
+    line-height:1.45;border:2px solid #262F39;border-radius:14px;padding:14px;resize:vertical;
+    font-family:inherit;outline:none;}
+  textarea:focus{border-color:#00E5FF;}
+  button{width:100%;margin-top:14px;padding:17px;font-size:18px;font-weight:700;
+    border:none;border-radius:14px;background:#00E5FF;color:#04222a;font-family:inherit;}
+  button:active{filter:brightness(.88);}
+  button.sec{background:#12171D;color:#9AA7B5;border:2px solid #262F39;font-weight:600;
+    margin-top:9px;padding:13px;font-size:16px;}
+  #stat{margin-top:15px;font-size:16px;min-height:24px;color:#7d8790;}
+  #stat.ok{color:#00FF85;} #stat.err{color:#FFC24B;}
+  .setup{margin-top:26px;padding-top:18px;border-top:1px solid #1b232b;color:#5a646e;font-size:13.5px;line-height:1.55;}
+  .setup b{color:#9AA7B5;}
+  .big{font-size:52px;text-align:center;margin:38px 0 12px;}
+  .cen{text-align:center;font-size:19px;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+'use strict';
+
+// Gateway config. Shared with the other glasses apps via the same #c= link
+// from config.html, so linking this device once covers all of them.
+function b64uDecode(s){
+  s=s.replace(/-/g,'+').replace(/_/g,'/');
+  const bin=atob(s),b=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)b[i]=bin.charCodeAt(i);
+  return new TextDecoder().decode(b);
+}
+let cfg=null;
+(function(){
+  const p=location.hash.startsWith('#c=')?location.hash.slice(3)
+        :new URLSearchParams(location.search).get('c');
+  if(p){try{cfg=JSON.parse(b64uDecode(p));localStorage.setItem('jv:cfg',JSON.stringify(cfg));}catch(e){}}
+  if(!cfg){try{cfg=JSON.parse(localStorage.getItem('jv:cfg'));}catch(e){}}
+})();
+
+const app=document.getElementById('app');
+const qs=new URLSearchParams(location.search);
+
+// Android's share sheet sends title/text/url separately. A shared article gives
+// text AND url; a shared selection gives only text. Join whatever arrived
+// rather than dropping the link, which is usually the bit you wanted.
+const shared=[qs.get('title'),qs.get('text'),qs.get('url')]
+  .filter(v=>v && v.trim()).join('\n').trim();
+
+function post(text){
+  if(!cfg||!cfg.gw||!cfg.k) return Promise.reject(new Error('this device is not linked yet'));
+  const u=new URL(cfg.gw.replace(/\/$/,'')+'/v1/capture');
+  u.searchParams.set('k',cfg.k);
+  u.searchParams.set('t',text);
+  return fetch(u).then(r=>r.json()).then(j=>{
+    if(!j.ok) throw new Error(j.error||'the Mac refused it');
+    return j;
+  });
+}
+
+// SHARE-SHEET PATH. Fire immediately and get out of the way: the whole point is
+// that sharing feels instant, not that it opens an app you then have to tap.
+if(shared){
+  app.innerHTML='<h1>CLIP TO MAC</h1><div class="sub">sending…</div>'+
+    '<div class="big">⏳</div><div class="cen" id="s">'+
+    shared.slice(0,90).replace(/</g,'&lt;')+(shared.length>90?'…':'')+'</div>';
+  post(shared).then(()=>{
+    app.innerHTML='<h1>CLIP TO MAC</h1><div class="sub">done</div>'+
+      '<div class="big">✅</div><div class="cen">On the Mac clipboard.<br>'+
+      '<span style="color:#7d8790;font-size:15px">Also saved to Desktop/glasses-captures</span></div>';
+    // Close the share overlay on its own so you land back where you were.
+    setTimeout(()=>{ window.close(); }, 1200);
+  }).catch(e=>{
+    app.innerHTML='<h1>CLIP TO MAC</h1><div class="sub">failed</div>'+
+      '<div class="big">⚠️</div><div class="cen">'+e.message+
+      '<br><span style="color:#7d8790;font-size:15px">Nothing was lost, share it again.</span></div>';
+  });
+} else {
+  // MANUAL PATH. Paste or type, then send.
+  app.innerHTML=
+    '<h1>CLIP TO MAC</h1>'+
+    '<div class="sub">'+(cfg?'linked to your Mac':'⚠ not linked — open config.html once')+'</div>'+
+    '<textarea id="t" placeholder="Paste or type, then send…" autofocus></textarea>'+
+    '<button id="go">Send to Mac clipboard</button>'+
+    '<button id="paste" class="sec">Paste from this phone’s clipboard</button>'+
+    '<div id="stat"></div>'+
+    '<div class="setup"><b>Share sheet:</b> install this page to your home screen '+
+    '(browser menu, Add to Home screen) and "Clip" appears in Android’s share sheet. '+
+    'After that you can share text from any app straight to the Mac.</div>';
+
+  const ta=document.getElementById('t'), stat=document.getElementById('stat');
+  const say=(m,c)=>{stat.textContent=m;stat.className=c||'';};
+
+  document.getElementById('go').onclick=()=>{
+    const v=ta.value.trim();
+    if(!v){say('nothing to send','err');return;}
+    say('sending…');
+    post(v).then(()=>{ ta.value=''; say('✓ on the Mac clipboard','ok'); })
+           .catch(e=>say('failed, text kept: '+e.message,'err'));
+  };
+
+  document.getElementById('paste').onclick=async()=>{
+    try{
+      const t=await navigator.clipboard.readText();
+      if(t){ ta.value=t; say('pasted, now send'); } else { say('phone clipboard is empty','err'); }
+    }catch(e){
+      // Clipboard read needs permission and a user gesture, and some Android
+      // browsers refuse outright. Long-pressing the box always works.
+      say('browser blocked the read, long-press the box and paste','err');
+    }
+  };
+}
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('../sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
