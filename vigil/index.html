@@ -485,7 +485,12 @@ function stepBullets(dt){
     }
     b.x+=b.vx*dt; b.y+=b.vy*dt;
   }
-  bullets=bullets.filter(b=> b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30 && now-b.born<9000);
+  // Anything fired UPWARD past the boss is spent: it is above the box, it can
+  // never come back down, and it can never touch you. It used to fly on to the
+  // top of the arena, so half of every ring hung in the alcove as noise that
+  // read like a threat. Homing shots are exempt, because those do come back.
+  bullets=bullets.filter(b=> b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30 && now-b.born<9000
+    && !(!b.home && b.vy<0 && b.y < by-34));
   for(const bm of beams){ if(!bm.fired && now>=bm.at){ bm.fired=now; beep(160,.12,'sawtooth',.05); } }
   beams=beams.filter(bm=> !bm.fired || now-bm.fired<260);
 }

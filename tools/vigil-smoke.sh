@@ -6,9 +6,10 @@
 set -e
 TOOLS="$(cd "$(dirname "$0")" && pwd)"
 cd "$TOOLS/.."
-python3 -c "
+VIGIL_HTML="${VIGIL_HTML:-vigil/index.html}" python3 -c "
 import re
-s=open('vigil/index.html').read()
+import os
+s=open(os.environ.get('VIGIL_HTML','vigil/index.html')).read()
 js=''.join(re.findall(r'<script>(.*?)</script>', s, re.S))
 open('/tmp/_vigil_game.js','w').write(js)
 "
