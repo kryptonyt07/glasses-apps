@@ -63,6 +63,10 @@
   .boon b{display:block;color:var(--you);font-size:12px;letter-spacing:.08em;}
   .boon span{color:var(--dim);font-size:11.5px;}
 
+  .legend{display:flex;justify-content:center;gap:11px;flex-wrap:wrap;font-size:10px;
+    color:var(--faint);letter-spacing:.03em;}
+  .legend i{font-style:normal;display:inline-flex;align-items:center;gap:4px;}
+  .legend .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
   .foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);
     letter-spacing:.06em;}
 </style>
@@ -75,6 +79,12 @@
     <canvas id="cv"></canvas>
     <div id="menu"></div>
     <div id="veil"></div>
+  </div>
+  <div class="legend">
+    <i><span class="dot" style="background:#FF6B4A"></span>falls · sidestep</i>
+    <i><span class="dot" style="background:#FFB03A"></span>bursts out · read the gap</i>
+    <i><span class="dot" style="background:#A06BFF;box-shadow:0 0 0 2px #C77BFF inset"></span>hunts · circle it</i>
+    <i><span class="dot" style="background:var(--you)"></span>you</i>
   </div>
   <div class="foot"><span id="sc">1 / 5</span><span id="tip">drag anywhere to move</span></div>
 </div>
@@ -116,9 +126,9 @@ const BOONS = [
 ];
 
 const ACTS = [
-  { k:'strike', n:'STRIKE', dmg:1, secs:3.0, cls:'s', d:'1 damage · 3 seconds' },
+  { k:'strike', n:'STRIKE', dmg:1, secs:3.0, cls:'s', d:'1 damage · 3 seconds · a sharp burst' },
   { k:'guard',  n:'GUARD',  dmg:0, secs:2.0, cls:'g', d:'no damage · 2 seconds · regain a shield' },
-  { k:'surge',  n:'SURGE',  dmg:3, secs:7.5, cls:'u', d:'3 damage · 7.5 seconds of hell' },
+  { k:'surge',  n:'SURGE',  dmg:3, secs:7.5, cls:'u', d:'3 damage · 7.5 seconds · it gets worse' },
 ];
 
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -160,7 +170,7 @@ cv.addEventListener('pointerdown',e=>{
   [lastX,lastY]=toLocal(e); e.preventDefault();
 });
 cv.addEventListener('pointermove',e=>{
-  if(!dragging||!running)return;
+  if(!dragging||(!running&&!attract))return;
   const [x,y]=toLocal(e);
   px=Math.max(PR(),Math.min(W-PR(), px+(x-lastX)*SPD()));
   py=Math.max(PR(),Math.min(H-PR(), py+(y-lastY)*SPD()));
@@ -182,7 +192,7 @@ document.addEventListener('keyup',e=>{keys[e.key]=false;});
 // Every attack TELEGRAPHS. That is the one rule carried over from the grid
 // version and it is what makes dying feel like your fault rather than the
 // game's. Nothing spawns already lethal.
-function shot(x,y,vx,vy,r){ bullets.push({x,y,vx,vy,r:r||5,born:performance.now()}); }
+function shot(x,y,vx,vy,r,kind){ bullets.push({x,y,vx,vy,r:r||5,kind:kind||'straight',born:performance.now()}); }
 
 function emit(kind, t, sp){
   const R=Math.random;
@@ -190,25 +200,25 @@ function emit(kind, t, sp){
     const gap=R()*(W-120)+60;
     for(let x=12;x<W;x+=34){
       if(Math.abs(x-gap)<46) continue;           // a real gap, always
-      shot(x,-8,0,(70+22*sp)*sp,5);
+      shot(x,-8,0,(70+22*sp)*sp,5,'rain');
     }
   } else if(kind==='ring'){
     const n=18, off=R()*Math.PI*2, hole=Math.floor(R()*n);
     for(let i=0;i<n;i++){
       if(i===hole||i===(hole+1)%n) continue;      // the gap you aim for
       const a=off+i/n*Math.PI*2;
-      shot(W/2,H/2,Math.cos(a)*68*sp,Math.sin(a)*68*sp,5);
+      shot(W/2,H/2,Math.cos(a)*68*sp,Math.sin(a)*68*sp,5,'burst');
     }
   } else if(kind==='spiral'){
     const a=t*2.4;
     for(let k=0;k<2;k++){
       const ang=a+k*Math.PI;
-      shot(W/2,H/2,Math.cos(ang)*74*sp,Math.sin(ang)*74*sp,4.5);
+      shot(W/2,H/2,Math.cos(ang)*74*sp,Math.sin(ang)*74*sp,4.5,'burst');
     }
   } else if(kind==='homing'){
     const edge=Math.floor(R()*4);
     const sx=edge===0?0:edge===1?W:R()*W, sy=edge===2?0:edge===3?H:R()*H;
-    bullets.push({x:sx,y:sy,vx:0,vy:0,r:6,home:true,spd:52*sp,born:performance.now()});
+    bullets.push({x:sx,y:sy,vx:0,vy:0,r:6.5,home:true,kind:'homing',spd:52*sp,born:performance.now()});
   } else if(kind==='sweep'){
     // telegraph first, fire after: a thin line, then the beam
     const vert=R()<.5, pos=40+R()*(W-80);
@@ -268,8 +278,25 @@ function frame(now){
   if(keys.ArrowDown) py=Math.min(H-PR(),py+k);
 
   // spawn on a cadence that ramps through the phase
+  // INTENSITY CURVE. A flat spawn rate made STRIKE free: three seconds was not
+  // long enough for the arena to fill, so the safe option was strictly optimal
+  // and SURGE was a trap. Danger is now front-loaded AND back-loaded.
+  //
+  //   opening burst  — every phase is dangerous from the first half second, so
+  //                    a short phase is a sharp test rather than a free window
+  //   mid lull       — brief breathing room, which is what makes the ramp read
+  //   end ramp       — density climbs with how far through a LONG phase you are,
+  //                    so Surge's last seconds are the worst of the fight
+  //
+  // Net effect: Strike is a burst you must actually dodge, Surge is an
+  // endurance run that gets worse the longer you are in it. Same total damage
+  // per second, completely different risk shape. That is the decision.
   spawnAcc+=dt;
-  const rate=0.42/boss.speed;
+  const prog = Math.min(1, t/curSecs);
+  const open = Math.max(0, 1 - t/0.9);            // hard for the first ~0.9s
+  const ramp = Math.pow(prog, 1.7) * (curSecs/3); // long phases end brutally
+  const intensity = 1 + open*1.15 + ramp*1.15;
+  const rate = 0.42 / (boss.speed * intensity);
   if(spawnAcc>rate){
     spawnAcc=0;
     emit(boss.pat[Math.floor(Math.random()*boss.pat.length)], t, boss.speed);
@@ -302,9 +329,24 @@ function draw(t){
       if(bm.vert) ctx.fillRect(bm.pos-9,0,18,H); else ctx.fillRect(0,bm.pos-9,W,18);
     }
   }
-  ctx.fillStyle='#FF6B4A';
+  // Each threat is drawn as WHAT IT IS, because each wants a different response
+  // and they all looked identical before. Rain is sidestepped, bursts are read
+  // outward from the middle, and homing must be CIRCLED rather than outrun, so
+  // it gets its own shape, colour and pulse instead of being another orange dot.
   for(const b of bullets){
-    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+    if(b.kind==='homing'){
+      const pu=0.5+0.5*Math.sin(performance.now()/110);
+      ctx.strokeStyle='#C77BFF'; ctx.lineWidth=2.2;
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r+3+pu*2,0,7); ctx.stroke();
+      ctx.fillStyle='#A06BFF';
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r-1.5,0,7); ctx.fill();
+    } else if(b.kind==='burst'){
+      ctx.fillStyle='#FFB03A';
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+    } else {
+      ctx.fillStyle='#FF6B4A';
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+    }
   }
   // player
   ctx.globalAlpha = inv ? (Math.floor(performance.now()/70)%2?0.35:1) : 1;
@@ -350,6 +392,9 @@ function startPhase(secs){
   menuEl.className=''; phEl.textContent='SURVIVE';
   curSecs=secs; spawnAcc=0; bullets=[]; beams=[];
   px=W/2; py=H*0.72; iframeUntil=performance.now()+400;
+  // Seed one volley immediately. Starting on an empty board is what let a short
+  // phase be survived by standing still.
+  emit(boss.pat[Math.floor(Math.random()*boss.pat.length)], 0, boss.speed);
   phaseEnd=performance.now()+secs*1000;
   running=true; lastT=performance.now();
   requestAnimationFrame(frame);
@@ -420,17 +465,43 @@ function newRun(){
   beginBoss();
 }
 
+// ATTRACT MODE. The first version opened on a wall of text over a black square,
+// so you read ABOUT the game instead of seeing one. Now the arena is alive
+// behind the title with harmless bullets and a draggable player: you learn the
+// only verb in the game (drag to move) before anything can hurt you, and the
+// text shrinks to the two lines that actually matter.
+let attract=false;
+function attractLoop(now){
+  if(!attract) return;
+  const dt=Math.min(.05,(now-lastT)/1000); lastT=now;
+  attractAcc+=dt;
+  if(attractAcc>0.55){ attractAcc=0; emit('rain',0,0.55); }
+  for(const b of bullets){ b.x+=b.vx*dt; b.y+=b.vy*dt; }
+  bullets=bullets.filter(b=>b.y<H+30);
+  const k=170*dt;
+  if(keys.ArrowLeft)px=Math.max(PR(),px-k); if(keys.ArrowRight)px=Math.min(W-PR(),px+k);
+  if(keys.ArrowUp)py=Math.max(PR(),py-k);  if(keys.ArrowDown)py=Math.min(H-PR(),py+k);
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,107,74,.45)';
+  for(const b of bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill(); }
+  ctx.fillStyle='#4FE8C4';
+  ctx.beginPath(); ctx.arc(px,py,PR(),0,7); ctx.fill();
+  requestAnimationFrame(attractLoop);
+}
+let attractAcc=0;
 function intro(){
+  // running stays false, so nothing collides and nothing can kill you here,
+  // but pointermove needs it to move the player. A dedicated flag instead.
+  boons=[]; bullets=[]; beams=[]; px=W/2; py=H*0.72;
+  attract=true; lastT=performance.now(); requestAnimationFrame(attractLoop);
   veil.className='on';
   veil.innerHTML='<h2>VIGIL</h2><div class="r">'+
-    'Two phases, over and over.<br><br>'+
-    '<b>YOUR MOVE.</b> No timer. Pick an attack.<br>'+
-    '<b>SURVIVE.</b> Real time. Drag anywhere to move.<br><br>'+
-    'The attack you choose decides how long you must survive. '+
-    'STRIKE is three seconds. SURGE is seven and a half.<br><br>'+
+    '<b>Drag anywhere.</b> That is the whole control.<br><br>'+
+    'You pick an attack with no timer on you. Then you survive, in real time, '+
+    'for exactly as long as that attack costs.<br><br>'+
     '<span style="color:var(--faint)">Everything telegraphs before it fires.</span>'+
     '</div><button class="btn">BEGIN</button>';
-  veil.querySelector('.btn').onclick=newRun;
+  veil.querySelector('.btn').onclick=()=>{ attract=false; newRun(); };
 }
 
 fit(); window.addEventListener('resize',fit);
