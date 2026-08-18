@@ -13,6 +13,23 @@ s=open(os.environ.get('VIGIL_HTML','vigil/index.html')).read()
 js=''.join(re.findall(r'<script>(.*?)</script>', s, re.S))
 open('/tmp/_vigil_game.js','w').write(js)
 "
+# Every boon must actually be wired to something. WARDING advertised "a shield
+# each fight" while has('ward') was never read anywhere, and BREVITY advertised
+# one second while the code took a fifth. A boon that lies is worse than a boon
+# that is weak, and neither drift was visible from inside the game.
+for k in $(python3 -c "
+import re
+js=open('/tmp/_vigil_game.js').read()
+m=re.search(r'const BOONS\s*=\s*\[(.*?)\n\];', js, re.S)
+print(' '.join(re.findall(r\"k:'([a-z]+)'\", m.group(1))))
+"); do
+  if ! grep -q "has('$k')" /tmp/_vigil_game.js && ! grep -q "b.k==='$k'" /tmp/_vigil_game.js; then
+    echo "SMOKE FAILED:
+  boon '$k' is never read: it is listed, offered, and does nothing" >&2
+    exit 1
+  fi
+done
+
 node -e "
 $(cat "$TOOLS/dom-shim.js")
 let RAF=[]; global.requestAnimationFrame=f=>{RAF.push(f);return RAF.length;};
