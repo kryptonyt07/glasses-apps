@@ -765,8 +765,8 @@ function showMenu(){
   paintHud();
 }
 
-function strikeAnim(dmg, done){
-  running=false; phEl.textContent = dmg?'STRIKE':'GUARD';
+function strikeAnim(dmg, done, label){
+  running=false; phEl.textContent = label || (dmg?'STRIKE':'GUARD');
   const t0=performance.now(), sx=px, sy=py, dur=dmg?420:260;
   (function step(now){
     const k=Math.min(1,(now-t0)/dur);
@@ -826,7 +826,7 @@ function endPhase(){
   // health the swing you were holding lands BERSERK. It can only ever be
   // better than the number you were shown.
   const dmg=a.dmg*(has('dmg')&&hp<=maxHp/2&&a.dmg?2:1);
-  strikeAnim(dmg, ()=>{ if(bossHp<=0) return killBoss(); showMenu(); });
+  strikeAnim(dmg, ()=>{ if(bossHp<=0) return killBoss(); showMenu(); }, a.n);
 }
 
 function paintHud(){
@@ -856,9 +856,13 @@ function clearBoss(){
   });
 }
 
+const plural=(n,w)=> n+' '+w+(n===1?'':'s');
+
 function endRun(won){
   running=false; music('off'); veil.className='on';
-  const mins=((performance.now()-runStart)/1000).toFixed(0);
+  // runStart is always set by newRun in the real flow; the guard is so a
+  // victory screen can never read "All five in NaNs".
+  const mins=(((performance.now()-(runStart||performance.now()))/1000)||0).toFixed(0);
   if(won){
     // Describe the run back rather than printing a fixed challenge. The old
     // screen said "now clear it using only SURGE" to someone who had just
@@ -868,8 +872,8 @@ function endRun(won){
     const lop=tot && Math.max(used.strike,used.surge)/tot>=0.85;
     const next = lop
       ? (top==='surge'
-          ? 'You never blinked: '+used.surge+' surges, '+used.strike+' strikes. Now clear it without a single SURGE.'
-          : 'You ground it down: '+used.strike+' strikes, '+used.surge+' surges. Now clear it on SURGE alone.')
+          ? 'You never blinked: '+plural(used.surge,'surge')+', '+plural(used.strike,'strike')+'. Now clear it without a single SURGE.'
+          : 'You ground it down: '+plural(used.strike,'strike')+', '+plural(used.surge,'surge')+'. Now clear it on SURGE alone.')
       : (used.guard===0
           ? 'You never guarded once. Try it, and watch the ceiling come down.'
           : 'A mixed run. Now try it without ever guarding.');
