@@ -103,16 +103,20 @@
 // draw scale changes. Balancing against device size would be a nightmare.
 const W = 400, H = 400;
 
+// Each boss has a FORM as well as a pattern set. "Show the enemy in front of
+// me" was the note, and it was right: fighting an HP bar has no character in
+// it. The boss now sits in the arena, every projectile leaves ITS body, it
+// flinches when hit, and it visibly enrages when you choose SURGE.
 const BOSSES = [
-  { name:'SENTRY',  hp:6,  pat:['rain'],                    speed:1.00,
+  { name:'SENTRY', form:'eye', col:'#7BE3FF',  hp:6,  pat:['rain'],                    speed:1.00,
     tell:'It rains straight down. Read the gaps early, they do not move.' },
-  { name:'CHOIR',   hp:8,  pat:['ring','rain'],             speed:1.05,
+  { name:'CHOIR', form:'triad', col:'#B98CFF',   hp:8,  pat:['ring','rain'],             speed:1.05,
     tell:'Rings need you moving OUT, not sideways. Pick your gap before it blooms.' },
-  { name:'LATTICE', hp:11, pat:['sweep','rain','spiral'],   speed:1.12,
+  { name:'LATTICE', form:'grid', col:'#FF9BE0', hp:11, pat:['sweep','rain','spiral'],   speed:1.12,
     tell:'The beam telegraphs thin before it fires thick. That line is your warning.' },
-  { name:'HOUND',   hp:13, pat:['homing','sweep','rain'],   speed:1.18,
+  { name:'HOUND', form:'maw', col:'#FF8A5C',   hp:13, pat:['homing','sweep','rain'],   speed:1.18,
     tell:'Homing shots turn slowly. Circle them, never outrun them in a line.' },
-  { name:'WARDEN',  hp:17, pat:['spiral','ring','sweep','homing','rain'], speed:1.25,
+  { name:'WARDEN', form:'crown', col:'#A06BFF',  hp:17, pat:['spiral','ring','sweep','homing','rain'], speed:1.25,
     tell:'Everything at once. You already know each piece.' },
 ];
 
@@ -126,9 +130,9 @@ const BOONS = [
 ];
 
 const ACTS = [
-  { k:'strike', n:'STRIKE', dmg:1, secs:3.0, cls:'s', d:'1 damage · 3 seconds · a sharp burst' },
-  { k:'guard',  n:'GUARD',  dmg:0, secs:2.0, cls:'g', d:'no damage · 2 seconds · regain a shield' },
-  { k:'surge',  n:'SURGE',  dmg:3, secs:7.5, cls:'u', d:'3 damage · 7.5 seconds · it gets worse' },
+  { k:'strike', n:'STRIKE', dmg:1, secs:3.0, cls:'s', d:'1 damage · 3s · it shrugs this off' },
+  { k:'guard',  n:'GUARD',  dmg:0, secs:2.0, cls:'g', d:'no damage · 2s · shield, but it CLOSES IN' },
+  { k:'surge',  n:'SURGE',  dmg:3, secs:7.5, cls:'u', d:'3 damage · 7.5s · ENRAGES it' },
 ];
 
 const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
@@ -140,16 +144,72 @@ const tipEl=document.getElementById('tip');
 
 let boss, stage, hp, maxHp, shield, bossHp, boons, deaths, runStart;
 let px, py, bullets, beams, phaseEnd, running, iframeUntil, lastT;
+let bx, by, bFlinch, bRage, bDying, parts;
 deaths=parseInt(localStorage.getItem('vigil:deaths')||'0',10);
 const has=k=>boons.includes(k);
 const PR=()=> has('small') ? 4.5 : 6.5;          // hitbox radius
 const SPD=()=> has('fast') ? 1.45 : 1.0;
 
-let ac=null;
-function beep(f,d,t,v){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
-  const o=ac.createOscillator(),g=ac.createGain();o.type=t||'square';o.frequency.value=f;
-  g.gain.value=v==null?.045:v;g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+d);
-  o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}}
+// ── audio ───────────────────────────────────────────────────────────────────
+// Generated, not loaded: no files, no wait, and the music can react to the game
+// because it IS the game. A bullet hell without sound is half a game, and the
+// pulse doing the work here is tempo — it doubles during a dodge phase and cuts
+// dead the instant you are safe, so your ears know which phase you are in
+// before your eyes do.
+let ac=null, master=null, musicOn=true, musicTimer=null, musicStep=0, musicMode='calm';
+function actx(){
+  if(!ac){
+    try{
+      ac=new (window.AudioContext||window.webkitAudioContext)();
+      master=ac.createGain(); master.gain.value=0.9; master.connect(ac.destination);
+    }catch(e){ ac=null; }
+  }
+  if(ac && ac.state==='suspended') ac.resume();
+  return ac;
+}
+function tone(f,d,type,v,when){
+  const c=actx(); if(!c) return;
+  const t0=(when||c.currentTime);
+  const o=c.createOscillator(), g=c.createGain();
+  o.type=type||'square'; o.frequency.setValueAtTime(f,t0);
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(Math.max(.0002,v==null?.045:v),t0+0.008);
+  g.gain.exponentialRampToValueAtTime(.0001,t0+d);
+  o.connect(g); g.connect(master||c.destination); o.start(t0); o.stop(t0+d+.02);
+}
+function noise(d,v){
+  const c=actx(); if(!c) return;
+  const n=Math.floor(c.sampleRate*d), buf=c.createBuffer(1,n,c.sampleRate), ch=buf.getChannelData(0);
+  for(let i=0;i<n;i++) ch[i]=(Math.random()*2-1)*(1-i/n);
+  const src=c.createBufferSource(); src.buffer=buf;
+  const g=c.createGain(); g.gain.value=v||.08;
+  const f=c.createBiquadFilter(); f.type='lowpass'; f.frequency.value=1400;
+  src.connect(f); f.connect(g); g.connect(master||c.destination); src.start();
+}
+function beep(f,d,t,v){ tone(f,d,t,v); }
+
+// A two-bar minor figure. Same notes in both modes; only tempo and voicing
+// change, so the transition reads as the SAME music getting urgent rather than
+// a different track starting.
+const SCALE=[110,130.81,146.83,164.81,196,220,261.63,293.66];
+const FIG=[0,2,4,2,5,4,2,0, 0,3,5,3,6,5,3,0];
+function musicTick(){
+  if(!musicOn) return;
+  const fast = musicMode==='fight';
+  const i = musicStep % FIG.length;
+  const root = SCALE[FIG[i]];
+  if(i%4===0) tone(root/2, fast?.28:.5, 'triangle', fast?.055:.035);
+  if(fast || i%2===0) tone(root*2, fast?.10:.16, 'square', fast?.022:.013);
+  if(fast && i%8===4) noise(.06,.05);
+  musicStep++;
+  musicTimer=setTimeout(musicTick, fast?125:230);
+}
+function music(mode){
+  musicMode=mode;
+  if(musicTimer) clearTimeout(musicTimer);
+  if(mode==='off'){ musicTimer=null; return; }
+  musicTick();
+}
 
 function fit(){
   const r=Math.min(window.devicePixelRatio||1,2);
@@ -203,25 +263,23 @@ function emit(kind, t, sp){
     const gap=R()*(W-120)+60;
     for(let x=12;x<W;x+=34){
       if(Math.abs(x-gap)<46) continue;           // a real gap, always
-      shot(x,-8,0,(70+22*sp)*sp,5,'rain');
+      shot(x, by+18, (x-bx)*0.16, (70+22*sp)*sp, 5, 'rain');
     }
   } else if(kind==='ring'){
     const n=18, off=R()*Math.PI*2, hole=Math.floor(R()*n);
     for(let i=0;i<n;i++){
       if(i===hole||i===(hole+1)%n) continue;      // the gap you aim for
       const a=off+i/n*Math.PI*2;
-      shot(W/2,H/2,Math.cos(a)*68*sp,Math.sin(a)*68*sp,5,'burst');
+      shot(bx,by,Math.cos(a)*68*sp,Math.sin(a)*68*sp,5,'burst');
     }
   } else if(kind==='spiral'){
     const a=t*2.4;
     for(let k=0;k<2;k++){
       const ang=a+k*Math.PI;
-      shot(W/2,H/2,Math.cos(ang)*74*sp,Math.sin(ang)*74*sp,4.5,'burst');
+      shot(bx,by,Math.cos(ang)*74*sp,Math.sin(ang)*74*sp,4.5,'burst');
     }
   } else if(kind==='homing'){
-    const edge=Math.floor(R()*4);
-    const sx=edge===0?0:edge===1?W:R()*W, sy=edge===2?0:edge===3?H:R()*H;
-    bullets.push({x:sx,y:sy,vx:0,vy:0,r:6.5,home:true,kind:'homing',spd:52*sp,born:performance.now()});
+    bullets.push({x:bx,y:by,vx:0,vy:0,r:6.5,home:true,kind:'homing',spd:52*sp,born:performance.now()});
   } else if(kind==='sweep'){
     // telegraph first, fire after: a thin line, then the beam
     const vert=R()<.5, pos=40+R()*(W-80);
@@ -262,6 +320,7 @@ function takeHit(){
   if(shield){ shield=false; beep(430,.15,'triangle',.06); }
   else { hp--; beep(100,.22,'sawtooth',.08); }
   iframeUntil=performance.now()+900;           // generous i-frames, bullet-hell standard
+  burstParts(px,py,'#FF4A2E',14);
   stageEl.classList.add('hit');
   setTimeout(()=>stageEl.classList.remove('hit'),220);
   paintHud();
@@ -298,7 +357,7 @@ function frame(now){
   const prog = Math.min(1, t/curSecs);
   const open = Math.max(0, 1 - t/0.9);            // hard for the first ~0.9s
   const ramp = Math.pow(prog, 1.7) * (curSecs/3); // long phases end brutally
-  const intensity = 1 + open*1.15 + ramp*1.15;
+  const intensity = (1 + open*1.15 + ramp*1.15) * (bRage?1.22:1);
   const rate = 0.42 / (boss.speed * intensity);
   if(spawnAcc>rate){
     spawnAcc=0;
@@ -314,8 +373,70 @@ function frame(now){
   requestAnimationFrame(frame);
 }
 
+function drawBoss(now){
+  if(bDying>0){
+    // death: it comes apart. A boss that simply vanishes has no payoff.
+    const k=Math.min(1,(now-bDying)/900);
+    ctx.globalAlpha=1-k;
+    for(let i=0;i<14;i++){
+      const a=i/14*Math.PI*2, d=k*150;
+      ctx.fillStyle=boss.col;
+      ctx.beginPath(); ctx.arc(bx+Math.cos(a)*d, by+Math.sin(a)*d, 7*(1-k), 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha=1; return;
+  }
+  const bob=Math.sin(now/620)*5;
+  const y=by+bob;
+  const hurt=now<bFlinch;
+  const r=30 + (bRage?5:0) + (hurt?4:0);
+  ctx.save();
+  ctx.translate(bx,y);
+  // rage reads as heat: it grows and shifts red when you chose SURGE
+  ctx.fillStyle = hurt ? '#FFFFFF' : (bRage ? '#FF6B6B' : boss.col);
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = bRage?26:14;
+  const f=boss.form;
+  if(f==='eye'){
+    ctx.beginPath(); ctx.ellipse(0,0,r,r*0.62,0,0,7); ctx.fill();
+    ctx.shadowBlur=0; ctx.fillStyle='#08080a';
+    ctx.beginPath(); ctx.arc(0,0,r*0.28,0,7); ctx.fill();
+  } else if(f==='triad'){
+    for(let i=0;i<3;i++){ const a=now/900+i/3*Math.PI*2;
+      ctx.beginPath(); ctx.arc(Math.cos(a)*r*0.6,Math.sin(a)*r*0.6,r*0.42,0,7); ctx.fill(); }
+  } else if(f==='grid'){
+    ctx.beginPath();
+    for(let i=0;i<4;i++){ const a=now/1100+i/4*Math.PI*2;
+      ctx.rect(Math.cos(a)*r*0.55-8, Math.sin(a)*r*0.55-8, 16,16); }
+    ctx.fill();
+    ctx.beginPath(); ctx.arc(0,0,r*0.3,0,7); ctx.fill();
+  } else if(f==='maw'){
+    const open=0.35+0.25*Math.sin(now/300);
+    ctx.beginPath(); ctx.arc(0,0,r,open,Math.PI*2-open); ctx.lineTo(0,0); ctx.fill();
+  } else {
+    ctx.beginPath();
+    for(let i=0;i<7;i++){ const a=-Math.PI/2+i/7*Math.PI*2;
+      ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+      const b=a+Math.PI/7; ctx.lineTo(Math.cos(b)*r*0.45, Math.sin(b)*r*0.45); }
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore(); ctx.shadowBlur=0;
+}
+
+function drawParts(now){
+  for(const p of parts){ const k=(now-p.t)/460; if(k>1) continue;
+    ctx.globalAlpha=1-k; ctx.fillStyle=p.c;
+    ctx.beginPath(); ctx.arc(p.x+p.vx*k*46, p.y+p.vy*k*46, 3.5*(1-k), 0, 7); ctx.fill(); }
+  ctx.globalAlpha=1;
+  parts=parts.filter(p=>now-p.t<460);
+}
+function burstParts(x,y,c,n){
+  const now=performance.now();
+  for(let i=0;i<(n||10);i++){ const a=Math.random()*7;
+    parts.push({x,y,vx:Math.cos(a)*(1+Math.random()*2),vy:Math.sin(a)*(1+Math.random()*2),c,t:now}); }
+}
+
 function draw(t){
   ctx.clearRect(0,0,W,H);
+  drawBoss(performance.now());
   const inv = performance.now()<iframeUntil;
 
   for(const bm of beams){
@@ -352,6 +473,7 @@ function draw(t){
     }
   }
   // player
+  drawParts(performance.now());
   ctx.globalAlpha = inv ? (Math.floor(performance.now()/70)%2?0.35:1) : 1;
   ctx.fillStyle=(has('dmg')&&hp<=maxHp/2)?'#FFC94B':'#4FE8C4';
   ctx.beginPath(); ctx.arc(px,py,PR(),0,7); ctx.fill();
@@ -382,13 +504,63 @@ function showMenu(){
   menuEl.querySelectorAll('.act').forEach(el=>el.onclick=()=>{
     const a=ACTS[+el.dataset.i];
     const berserkNow=has('dmg')&&hp<=maxHp/2;
-    bossHp-=a.dmg*(berserkNow?2:1);
-    if(a.k==='guard') shield=true;
-    beep(a.dmg?820:520,.09,'square',.05);
-    if(bossHp<=0){ menuEl.className=''; return clearBoss(); }
-    startPhase(Math.max(1.2,a.secs-(has('brief')?1:0)));
+    const dmg=a.dmg*(berserkNow?2:1);
+    menuEl.className='';
+    // CONSEQUENCE. "Selecting your action is boring and has no consequence" was
+    // the note. Each choice now visibly provokes the thing you are fighting:
+    //   SURGE  enrages it. It swells, turns red, and the next phase is denser.
+    //   GUARD  lets it ADVANCE. It closes in, so its shots have less travel
+    //          time and the arena you dodge in is effectively smaller.
+    //   STRIKE it shrugs off. Cheap, safe, and it changes nothing.
+    // So the menu is no longer a spreadsheet: you are choosing how angry to
+    // make it, and you can see the answer before you have to survive it.
+    bRage = (a.k==='surge');
+    if(a.k==='guard'){ shield=true; by=Math.min(150, by+16); }
+    strikeAnim(dmg, ()=>{
+      if(bossHp<=0){ return killBoss(); }
+      startPhase(Math.max(1.2,a.secs-(has('brief')?1:0)));
+    });
   });
   paintHud();
+}
+
+function strikeAnim(dmg, done){
+  running=false; phEl.textContent = dmg?'STRIKE':'GUARD';
+  const t0=performance.now(), sx=px, sy=py, dur=dmg?420:260;
+  (function step(now){
+    const k=Math.min(1,(now-t0)/dur);
+    ctx.clearRect(0,0,W,H);
+    drawBoss(now);
+    drawParts(now);
+    if(dmg){
+      // your dot lunges at it and snaps back, so the hit has a direction
+      const e=k<.5 ? k*2 : (1-k)*2;
+      const cx=sx+(bx-sx)*e, cy=sy+(by-sy)*e;
+      ctx.fillStyle='#4FE8C4'; ctx.shadowColor='#4FE8C4'; ctx.shadowBlur=16;
+      ctx.beginPath(); ctx.arc(cx,cy,PR(),0,7); ctx.fill(); ctx.shadowBlur=0;
+      if(k>=.5 && bFlinch<t0){
+        bossHp-=dmg; bFlinch=now+220; burstParts(bx,by,boss.col,16);
+        tone(dmg>1?150:240,.16,'sawtooth',.07); noise(.09,.07);
+        paintHud();
+      }
+    } else {
+      ctx.strokeStyle='#6FA8FF'; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.arc(sx,sy,PR()+6+k*7,0,7); ctx.stroke();
+      ctx.fillStyle='#4FE8C4'; ctx.beginPath(); ctx.arc(sx,sy,PR(),0,7); ctx.fill();
+      if(k>=.5 && bFlinch<t0){ bFlinch=t0; tone(520,.14,'triangle',.05); paintHud(); }
+    }
+    if(k<1) requestAnimationFrame(step); else done();
+  })(t0);
+}
+
+function killBoss(){
+  running=false; bDying=performance.now(); music('off');
+  tone(90,.7,'sawtooth',.08); noise(.5,.12);
+  const t0=performance.now();
+  (function step(now){
+    ctx.clearRect(0,0,W,H); drawBoss(now); drawParts(now);
+    if(now-t0<950) requestAnimationFrame(step); else clearBoss();
+  })(t0);
 }
 
 function startPhase(secs){
@@ -399,12 +571,12 @@ function startPhase(secs){
   // phase be survived by standing still.
   emit(boss.pat[Math.floor(Math.random()*boss.pat.length)], 0, boss.speed);
   phaseEnd=performance.now()+secs*1000;
-  running=true; lastT=performance.now();
+  running=true; lastT=performance.now(); music('fight');
   requestAnimationFrame(frame);
 }
 
 function endPhase(){
-  running=false; bullets=[]; beams=[];
+  running=false; music('calm'); bullets=[]; beams=[];
   ctx.clearRect(0,0,W,H);
   showMenu();
 }
@@ -437,7 +609,7 @@ function clearBoss(){
 }
 
 function endRun(won){
-  running=false; veil.className='on';
+  running=false; music('off'); veil.className='on';
   const mins=((performance.now()-runStart)/1000).toFixed(0);
   if(won){
     veil.innerHTML='<h2 style="color:var(--you)">THE WARDEN FALLS</h2>'+
@@ -458,6 +630,7 @@ function endRun(won){
 
 function beginBoss(){
   boss=BOSSES[stage]; bossHp=boss.hp;
+  bx=W/2; by=96; bFlinch=0; bRage=false; bDying=0; parts=[];
   veil.className=''; bullets=[]; beams=[];
   tipEl.textContent = (()=>{ let seen=false; try{seen=localStorage.getItem('vigil:dragged')==='1';}catch(_){}
     return seen ? boss.tell.split('.')[0] : '↕ DRAG to move, do not use arrows'; })();
@@ -498,6 +671,7 @@ function intro(){
   // but pointermove needs it to move the player. A dedicated flag instead.
   boons=[]; bullets=[]; beams=[]; px=W/2; py=H*0.72;
   attract=true; lastT=performance.now(); requestAnimationFrame(attractLoop);
+  bx=W/2; by=96; bFlinch=0; bRage=false; bDying=0; parts=[]; boss=BOSSES[0];
   veil.className='on';
   veil.innerHTML='<h2>VIGIL</h2><div class="r">'+
     '<b>Drag anywhere.</b> Trackpad or thumb, not the arrow keys.<br>'+
