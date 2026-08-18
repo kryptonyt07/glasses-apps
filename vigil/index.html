@@ -165,7 +165,10 @@ function toLocal(e){
   const r=cv.getBoundingClientRect();
   return [(e.clientX-r.left)*(W/r.width), (e.clientY-r.top)*(H/r.height)];
 }
+let hasDragged=false;
 cv.addEventListener('pointerdown',e=>{
+  if(!hasDragged){ hasDragged=true; try{localStorage.setItem('vigil:dragged','1');}catch(_){}
+    const t=document.getElementById('tip'); if(t) t.textContent='that is it'; }
   cv.setPointerCapture(e.pointerId); dragging=true;
   [lastX,lastY]=toLocal(e); e.preventDefault();
 });
@@ -271,7 +274,7 @@ function frame(now){
   const t=(now-(phaseEnd-curSecs*1000))/1000;
 
   // keyboard movement
-  const k=170*SPD()*dt;
+  const k=265*SPD()*dt;
   if(keys.ArrowLeft) px=Math.max(PR(),px-k);
   if(keys.ArrowRight)px=Math.min(W-PR(),px+k);
   if(keys.ArrowUp)   py=Math.max(PR(),py-k);
@@ -456,7 +459,8 @@ function endRun(won){
 function beginBoss(){
   boss=BOSSES[stage]; bossHp=boss.hp;
   veil.className=''; bullets=[]; beams=[];
-  tipEl.textContent = stage===0 ? 'drag anywhere to move' : boss.tell.split('.')[0];
+  tipEl.textContent = (()=>{ let seen=false; try{seen=localStorage.getItem('vigil:dragged')==='1';}catch(_){}
+    return seen ? boss.tell.split('.')[0] : '↕ DRAG to move, do not use arrows'; })();
   showMenu();
 }
 
@@ -478,7 +482,7 @@ function attractLoop(now){
   if(attractAcc>0.55){ attractAcc=0; emit('rain',0,0.55); }
   for(const b of bullets){ b.x+=b.vx*dt; b.y+=b.vy*dt; }
   bullets=bullets.filter(b=>b.y<H+30);
-  const k=170*dt;
+  const k=265*dt;
   if(keys.ArrowLeft)px=Math.max(PR(),px-k); if(keys.ArrowRight)px=Math.min(W-PR(),px+k);
   if(keys.ArrowUp)py=Math.max(PR(),py-k);  if(keys.ArrowDown)py=Math.min(H-PR(),py+k);
   ctx.clearRect(0,0,W,H);
@@ -496,7 +500,8 @@ function intro(){
   attract=true; lastT=performance.now(); requestAnimationFrame(attractLoop);
   veil.className='on';
   veil.innerHTML='<h2>VIGIL</h2><div class="r">'+
-    '<b>Drag anywhere.</b> That is the whole control.<br><br>'+
+    '<b>Drag anywhere.</b> Trackpad or thumb, not the arrow keys.<br>'+
+    '<span style="color:var(--faint)">Arrows work, but dragging is far better. Try it now.</span><br><br>'+
     'You pick an attack with no timer on you. Then you survive, in real time, '+
     'for exactly as long as that attack costs.<br><br>'+
     '<span style="color:var(--faint)">Everything telegraphs before it fires.</span>'+
