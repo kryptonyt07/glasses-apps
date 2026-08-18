@@ -32,6 +32,7 @@
     box-shadow:0 0 10px rgba(79,232,196,.55);}
   .pip.gone{background:#232833;box-shadow:none;}
   .pip.shield{background:#6FA8FF;box-shadow:0 0 10px rgba(111,168,255,.6);}
+  .pip.rage{background:var(--gold-line);box-shadow:0 0 12px rgba(255,201,75,.8);}
 
   .bossline{display:flex;align-items:center;gap:9px;}
   .bossname{font-size:12.5px;letter-spacing:.15em;color:var(--boss);white-space:nowrap;}
@@ -154,9 +155,9 @@ const BOSSES = [
 const BOONS = [
   { k:'hp',     name:'VITALITY',   desc:'+1 maximum health, healed to full.' },
   { k:'heal',   name:'MEND',       desc:'Heal to full and gain a shield that eats one hit.' },
-  { k:'dmg',    name:'HEAVY HAND', desc:'Gold on a SAFE tile deals 2 damage. Rewards the good read.' },
+  { k:'dmg',    name:'HEAVY HAND', desc:'At half health or less, gold deals 2. Power for being hurt.' },
   { k:'reach',  name:'STRIDE',     desc:'Move up to 2 tiles in a straight line.' },
-  { k:'sight',  name:'FORESIGHT',  desc:'One extra gold tile appears every turn.' },
+  { k:'sight',  name:'FORESIGHT',  desc:'A second gold tile appears every other turn.' },
   { k:'shield', name:'WARDING',    desc:'Gain a shield that absorbs one hit, each fight.' },
 ];
 
@@ -266,7 +267,10 @@ function buildStrikes(t){
   const risky=cand.filter(([x,y])=>t.has(idx(x,y)));
   const safe =cand.filter(([x,y])=>!t.has(idx(x,y)));
   const out=new Set();
-  const n=has('sight')?2:1;
+  // Alternate turns only. A second gold EVERY turn made Foresight the new
+  // dominant pick (78%) for the same reason Heavy Hand was: it is a flat
+  // damage-rate increase, and the clock is what kills you.
+  const n=(has('sight') && turn%2===0)?2:1;
   for(let i=0;i<n;i++){
     const pool=(risky.length&&Math.random()<boss.risk)?risky:(safe.length?safe:risky);
     if(pool.length){const p=pool[Math.floor(Math.random()*pool.length)];out.add(idx(p[0],p[1]));}
@@ -295,9 +299,12 @@ function paint(){
     if(i===idx(px,py))c.classList.add('you');
   });
   hpEl.innerHTML='';
+  // Berserk has to be VISIBLE or it is a hidden rule. Pips go amber the moment
+  // doubling is live, so the risk and the reward are on screen together.
+  const berserkOn = has('dmg') && hp <= maxHp/2;
   for(let i=0;i<maxHp;i++){
     const p=document.createElement('div');
-    p.className='pip'+(i<hp?'':' gone');hpEl.appendChild(p);
+    p.className='pip'+(i<hp?(berserkOn?' rage':''):' gone');hpEl.appendChild(p);
   }
   if(shield){const p=document.createElement('div');p.className='pip shield';hpEl.appendChild(p);}
   const left=boss.limit-turn+1;
@@ -321,8 +328,13 @@ function step(nx,ny){
     // Doubles ONLY when the gold was on a safe tile. Unconditional double made
     // Heavy Hand an 80% clear rate against 13% for everything else, and it paid
     // for kamikaze. Now it pays for good reads.
-    const safeGold = !tells.has(here);
-    bossHp -= (has('dmg') && safeGold) ? 2 : 1;
+    // BERSERK (Aqeel's design, 18 Aug). Doubles only at half health or below.
+    // Unconditional doubling measured a 93% clear against 8% for Vitality; tying
+    // it to being hurt drops it to 75% AND makes max HP matter again, because a
+    // bigger pool lets you sit in berserk range without dying in it. Being
+    // wounded is now a resource you spend rather than a state you avoid.
+    const berserk = hp <= maxHp / 2;
+    bossHp -= (has('dmg') && berserk) ? 2 : 1;
     beep(780,.09,'square',.06);
   }
   paint();
