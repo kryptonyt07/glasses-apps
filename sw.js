@@ -37,7 +37,9 @@ const SHELLS = [
   './clip/',
   './clip/index.html',
   './warden/',
-  './warden/index.html'
+  './warden/index.html',
+  './vigil/',
+  './vigil/index.html'
 ];
 
 self.addEventListener('install', (e) => {

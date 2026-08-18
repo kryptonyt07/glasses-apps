@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#08080a">
+<title>VIGIL</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;
+    user-select:none;-webkit-user-select:none;}
+  :root{
+    --bg:#08080a; --panel:#12161d; --edge:#2a323d;
+    --ink:#EDF1F6; --dim:#8b95a3; --faint:#5b6572;
+    --you:#4FE8C4; --boss:#A06BFF;
+    --tell:#FF4A2E; --shot:#FF6B4A; --gold:#FFC94B;
+  }
+  html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font-family:ui-monospace,'SF Mono',Menlo,monospace;touch-action:none;}
+  body{display:flex;align-items:center;justify-content:center;
+    padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom);}
+  #wrap{width:100%;max-width:460px;display:flex;flex-direction:column;gap:8px;}
+
+  .hud{display:flex;align-items:center;justify-content:space-between;font-size:11px;
+    letter-spacing:.13em;color:var(--dim);}
+  .hp{display:flex;gap:5px;}
+  .pip{width:13px;height:13px;border-radius:3px;background:var(--you);
+    box-shadow:0 0 9px rgba(79,232,196,.5);}
+  .pip.gone{background:#222831;box-shadow:none;}
+  .pip.rage{background:var(--gold);box-shadow:0 0 11px rgba(255,201,75,.75);}
+  .bossline{display:flex;align-items:center;gap:8px;}
+  .bn{font-size:12px;letter-spacing:.15em;color:var(--boss);white-space:nowrap;}
+  #bb{flex:1;height:7px;background:#161a21;border-radius:99px;overflow:hidden;}
+  #bf{height:100%;background:linear-gradient(90deg,var(--boss),#C9A8FF);transition:width .3s;}
+
+  #stage{position:relative;width:100%;aspect-ratio:1;background:#0b0e13;
+    border:2px solid var(--edge);border-radius:12px;overflow:hidden;}
+  canvas{display:block;width:100%;height:100%;}
+  #stage.hit{animation:sh .22s;}
+  @keyframes sh{0%,100%{transform:translate(0,0)}25%{transform:translate(-5px,3px)}
+    50%{transform:translate(4px,-4px)}75%{transform:translate(-3px,-2px)}}
+
+  /* menu phase */
+  #menu{position:absolute;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:9px;background:rgba(8,8,10,.9);padding:18px;}
+  #menu.on{display:flex;}
+  #menu .lead{font-size:11.5px;letter-spacing:.12em;color:var(--dim);margin-bottom:2px;}
+  .act{width:100%;max-width:300px;padding:11px 14px;border-radius:10px;border:2px solid var(--edge);
+    background:#141922;color:var(--ink);font-family:inherit;text-align:left;font-size:13.5px;}
+  .act b{display:block;font-size:13px;letter-spacing:.09em;margin-bottom:1px;}
+  .act span{color:var(--dim);font-size:11.5px;}
+  .act.s b{color:var(--you);} .act.g b{color:#6FA8FF;} .act.u b{color:var(--gold);}
+
+  #veil{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
+    justify-content:center;gap:10px;background:rgba(8,8,10,.96);padding:20px;text-align:center;}
+  #veil.on{display:flex;}
+  #veil h2{font-size:clamp(20px,5.4vw,28px);letter-spacing:.14em;}
+  #veil .r{color:var(--dim);font-size:12.5px;line-height:1.7;max-width:320px;}
+  #veil b{color:var(--ink);}
+  .btn{padding:11px 24px;border-radius:10px;border:2px solid var(--you);color:var(--you);
+    font-family:inherit;font-size:13.5px;letter-spacing:.1em;background:transparent;}
+  .boon{width:100%;max-width:300px;padding:10px 13px;border-radius:10px;border:2px solid var(--edge);
+    background:#141922;text-align:left;font-family:inherit;color:var(--ink);}
+  .boon b{display:block;color:var(--you);font-size:12px;letter-spacing:.08em;}
+  .boon span{color:var(--dim);font-size:11.5px;}
+
+  .foot{display:flex;justify-content:space-between;font-size:10.5px;color:var(--faint);
+    letter-spacing:.06em;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="hud"><div class="hp" id="hp"></div><div id="ph">YOUR MOVE</div></div>
+  <div class="bossline"><span class="bn" id="bn">SENTRY</span><div id="bb"><div id="bf"></div></div></div>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="menu"></div>
+    <div id="veil"></div>
+  </div>
+  <div class="foot"><span id="sc">1 / 5</span><span id="tip">drag anywhere to move</span></div>
+</div>
+<script>
+'use strict';
+
+// VIGIL — the Undertale hybrid. Your turn is a menu with no clock on it; the
+// boss's turn is a real-time dodge phase. The join between them is the only
+// idea that matters here: THE ATTACK YOU PICK SETS HOW LONG YOU HAVE TO SURVIVE.
+// Strike is cheap and short, Surge is heavy and long. So the turn-based choice
+// and the real-time execution are the same decision, which is the thing most
+// hybrids get wrong by letting you pick a move and then dodging an unrelated
+// attack.
+
+// Fixed logical arena. Physics stay identical on a phone and a laptop; only the
+// draw scale changes. Balancing against device size would be a nightmare.
+const W = 400, H = 400;
+
+const BOSSES = [
+  { name:'SENTRY',  hp:6,  pat:['rain'],                    speed:1.00,
+    tell:'It rains straight down. Read the gaps early, they do not move.' },
+  { name:'CHOIR',   hp:8,  pat:['ring','rain'],             speed:1.05,
+    tell:'Rings need you moving OUT, not sideways. Pick your gap before it blooms.' },
+  { name:'LATTICE', hp:11, pat:['sweep','rain','spiral'],   speed:1.12,
+    tell:'The beam telegraphs thin before it fires thick. That line is your warning.' },
+  { name:'HOUND',   hp:13, pat:['homing','sweep','rain'],   speed:1.18,
+    tell:'Homing shots turn slowly. Circle them, never outrun them in a line.' },
+  { name:'WARDEN',  hp:17, pat:['spiral','ring','sweep','homing','rain'], speed:1.25,
+    tell:'Everything at once. You already know each piece.' },
+];
+
+const BOONS = [
+  { k:'hp',    n:'VITALITY',   d:'+1 maximum health, healed to full.' },
+  { k:'dmg',   n:'HEAVY HAND', d:'At half health or less, all damage doubles.' },
+  { k:'small', n:'SLIGHT',     d:'Your hitbox shrinks. Threads needles.' },
+  { k:'fast',  n:'FLEET',      d:'You move noticeably quicker.' },
+  { k:'ward',  n:'WARDING',    d:'A shield each fight, absorbs one hit.' },
+  { k:'brief', n:'BREVITY',    d:'Every dodge phase is one second shorter.' },
+];
+
+const ACTS = [
+  { k:'strike', n:'STRIKE', dmg:1, secs:3.0, cls:'s', d:'1 damage · 3 seconds' },
+  { k:'guard',  n:'GUARD',  dmg:0, secs:2.0, cls:'g', d:'no damage · 2 seconds · regain a shield' },
+  { k:'surge',  n:'SURGE',  dmg:3, secs:7.5, cls:'u', d:'3 damage · 7.5 seconds of hell' },
+];
+
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const stageEl=document.getElementById('stage'), menuEl=document.getElementById('menu');
+const veil=document.getElementById('veil'), hpEl=document.getElementById('hp');
+const phEl=document.getElementById('ph'), bnEl=document.getElementById('bn');
+const bfEl=document.getElementById('bf'), scEl=document.getElementById('sc');
+const tipEl=document.getElementById('tip');
+
+let boss, stage, hp, maxHp, shield, bossHp, boons, deaths, runStart;
+let px, py, bullets, beams, phaseEnd, running, iframeUntil, lastT;
+deaths=parseInt(localStorage.getItem('vigil:deaths')||'0',10);
+const has=k=>boons.includes(k);
+const PR=()=> has('small') ? 4.5 : 6.5;          // hitbox radius
+const SPD=()=> has('fast') ? 1.45 : 1.0;
+
+let ac=null;
+function beep(f,d,t,v){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+  const o=ac.createOscillator(),g=ac.createGain();o.type=t||'square';o.frequency.value=f;
+  g.gain.value=v==null?.045:v;g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+d);
+  o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}}
+
+function fit(){
+  const r=Math.min(window.devicePixelRatio||1,2);
+  cv.width=W*r; cv.height=H*r; ctx.setTransform(r,0,0,r,0,0);
+}
+
+// ── input: RELATIVE drag ────────────────────────────────────────────────────
+// Absolute "player teleports to your finger" is the obvious choice and it is
+// wrong on a phone: your thumb sits on top of the one thing you need to see.
+// Relative drag keeps the player visible and gives finer control.
+let dragging=false, lastX=0, lastY=0;
+function toLocal(e){
+  const r=cv.getBoundingClientRect();
+  return [(e.clientX-r.left)*(W/r.width), (e.clientY-r.top)*(H/r.height)];
+}
+cv.addEventListener('pointerdown',e=>{
+  cv.setPointerCapture(e.pointerId); dragging=true;
+  [lastX,lastY]=toLocal(e); e.preventDefault();
+});
+cv.addEventListener('pointermove',e=>{
+  if(!dragging||!running)return;
+  const [x,y]=toLocal(e);
+  px=Math.max(PR(),Math.min(W-PR(), px+(x-lastX)*SPD()));
+  py=Math.max(PR(),Math.min(H-PR(), py+(y-lastY)*SPD()));
+  lastX=x; lastY=y; e.preventDefault();
+});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>{dragging=false;}));
+// keyboard for the laptop
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if(!running){
+    const b=veil.classList.contains('on')?veil.querySelector('.btn,.boon'):null;
+    if(b&&(e.key==='Enter'||e.key===' ')){b.click();e.preventDefault();}
+  }
+});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+// ── patterns ────────────────────────────────────────────────────────────────
+// Every attack TELEGRAPHS. That is the one rule carried over from the grid
+// version and it is what makes dying feel like your fault rather than the
+// game's. Nothing spawns already lethal.
+function shot(x,y,vx,vy,r){ bullets.push({x,y,vx,vy,r:r||5,born:performance.now()}); }
+
+function emit(kind, t, sp){
+  const R=Math.random;
+  if(kind==='rain'){
+    const gap=R()*(W-120)+60;
+    for(let x=12;x<W;x+=34){
+      if(Math.abs(x-gap)<46) continue;           // a real gap, always
+      shot(x,-8,0,(70+22*sp)*sp,5);
+    }
+  } else if(kind==='ring'){
+    const n=18, off=R()*Math.PI*2, hole=Math.floor(R()*n);
+    for(let i=0;i<n;i++){
+      if(i===hole||i===(hole+1)%n) continue;      // the gap you aim for
+      const a=off+i/n*Math.PI*2;
+      shot(W/2,H/2,Math.cos(a)*68*sp,Math.sin(a)*68*sp,5);
+    }
+  } else if(kind==='spiral'){
+    const a=t*2.4;
+    for(let k=0;k<2;k++){
+      const ang=a+k*Math.PI;
+      shot(W/2,H/2,Math.cos(ang)*74*sp,Math.sin(ang)*74*sp,4.5);
+    }
+  } else if(kind==='homing'){
+    const edge=Math.floor(R()*4);
+    const sx=edge===0?0:edge===1?W:R()*W, sy=edge===2?0:edge===3?H:R()*H;
+    bullets.push({x:sx,y:sy,vx:0,vy:0,r:6,home:true,spd:52*sp,born:performance.now()});
+  } else if(kind==='sweep'){
+    // telegraph first, fire after: a thin line, then the beam
+    const vert=R()<.5, pos=40+R()*(W-80);
+    beams.push({vert,pos,at:performance.now()+900,fired:0});
+  }
+}
+
+function stepBullets(dt){
+  const now=performance.now();
+  for(const b of bullets){
+    if(b.home){
+      const dx=px-b.x, dy=py-b.y, m=Math.hypot(dx,dy)||1;
+      // turn RATE is capped so circling always beats running. A perfect tracker
+      // is unfair; a slow one is a puzzle.
+      b.vx += (dx/m*b.spd - b.vx)*Math.min(1,dt*1.1);
+      b.vy += (dy/m*b.spd - b.vy)*Math.min(1,dt*1.1);
+    }
+    b.x+=b.vx*dt; b.y+=b.vy*dt;
+  }
+  bullets=bullets.filter(b=> b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30 && now-b.born<9000);
+  for(const bm of beams){ if(!bm.fired && now>=bm.at){ bm.fired=now; beep(160,.12,'sawtooth',.05); } }
+  beams=beams.filter(bm=> !bm.fired || now-bm.fired<260);
+}
+
+function collide(){
+  if(performance.now()<iframeUntil) return false;
+  const r=PR();
+  for(const b of bullets) if(Math.hypot(b.x-px,b.y-py) < r+b.r-1) return true;
+  for(const bm of beams){
+    if(!bm.fired) continue;
+    const d = bm.vert ? Math.abs(px-bm.pos) : Math.abs(py-bm.pos);
+    if(d < r+9) return true;
+  }
+  return false;
+}
+
+function takeHit(){
+  if(shield){ shield=false; beep(430,.15,'triangle',.06); }
+  else { hp--; beep(100,.22,'sawtooth',.08); }
+  iframeUntil=performance.now()+900;           // generous i-frames, bullet-hell standard
+  stageEl.classList.add('hit');
+  setTimeout(()=>stageEl.classList.remove('hit'),220);
+  paintHud();
+}
+
+// ── loop ────────────────────────────────────────────────────────────────────
+function frame(now){
+  if(!running) return;
+  const dt=Math.min(.05,(now-lastT)/1000); lastT=now;
+  const t=(now-(phaseEnd-curSecs*1000))/1000;
+
+  // keyboard movement
+  const k=170*SPD()*dt;
+  if(keys.ArrowLeft) px=Math.max(PR(),px-k);
+  if(keys.ArrowRight)px=Math.min(W-PR(),px+k);
+  if(keys.ArrowUp)   py=Math.max(PR(),py-k);
+  if(keys.ArrowDown) py=Math.min(H-PR(),py+k);
+
+  // spawn on a cadence that ramps through the phase
+  spawnAcc+=dt;
+  const rate=0.42/boss.speed;
+  if(spawnAcc>rate){
+    spawnAcc=0;
+    emit(boss.pat[Math.floor(Math.random()*boss.pat.length)], t, boss.speed);
+  }
+
+  stepBullets(dt);
+  if(collide()) takeHit();
+  draw(t);
+
+  if(hp<=0) return endRun(false);
+  if(now>=phaseEnd) return endPhase();
+  requestAnimationFrame(frame);
+}
+
+function draw(t){
+  ctx.clearRect(0,0,W,H);
+  const inv = performance.now()<iframeUntil;
+
+  for(const bm of beams){
+    const now=performance.now();
+    if(!bm.fired){
+      const p=1-Math.max(0,(bm.at-now)/900);
+      ctx.strokeStyle=`rgba(255,74,46,${.25+p*.5})`; ctx.lineWidth=1+p*3;
+      ctx.beginPath();
+      if(bm.vert){ctx.moveTo(bm.pos,0);ctx.lineTo(bm.pos,H);}else{ctx.moveTo(0,bm.pos);ctx.lineTo(W,bm.pos);}
+      ctx.stroke();
+    } else {
+      const a=1-(now-bm.fired)/260;
+      ctx.fillStyle=`rgba(255,107,74,${a})`;
+      if(bm.vert) ctx.fillRect(bm.pos-9,0,18,H); else ctx.fillRect(0,bm.pos-9,W,18);
+    }
+  }
+  ctx.fillStyle='#FF6B4A';
+  for(const b of bullets){
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+  }
+  // player
+  ctx.globalAlpha = inv ? (Math.floor(performance.now()/70)%2?0.35:1) : 1;
+  ctx.fillStyle=(has('dmg')&&hp<=maxHp/2)?'#FFC94B':'#4FE8C4';
+  ctx.beginPath(); ctx.arc(px,py,PR(),0,7); ctx.fill();
+  ctx.globalAlpha=1;
+  if(shield){ ctx.strokeStyle='#6FA8FF'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(px,py,PR()+5,0,7); ctx.stroke(); }
+
+  // phase timer as a shrinking bar: you must know how much hell is left
+  const left=Math.max(0,(phaseEnd-performance.now())/1000);
+  ctx.fillStyle='#1b2029'; ctx.fillRect(0,H-5,W,5);
+  ctx.fillStyle='#A06BFF'; ctx.fillRect(0,H-5,W*(left/curSecs),5);
+}
+
+// ── phases ──────────────────────────────────────────────────────────────────
+let curSecs=3, spawnAcc=0;
+
+function showMenu(){
+  running=false; phEl.textContent='YOUR MOVE';
+  const berserk=has('dmg')&&hp<=maxHp/2;
+  menuEl.className='on';
+  menuEl.innerHTML='<div class="lead">'+(berserk?'BERSERK · damage doubled':'choose')+'</div>'+
+    ACTS.map((a,i)=>{
+      const d=a.dmg*(berserk&&a.dmg?2:1);
+      const s=Math.max(1.2,a.secs-(has('brief')?1:0));
+      return '<button class="act '+a.cls+'" data-i="'+i+'"><b>'+a.n+'</b><span>'+
+        (a.dmg? d+' damage · ':'')+s.toFixed(1)+'s'+(a.k==='guard'?' · regain a shield':'')+'</span></button>';
+    }).join('');
+  menuEl.querySelectorAll('.act').forEach(el=>el.onclick=()=>{
+    const a=ACTS[+el.dataset.i];
+    const berserkNow=has('dmg')&&hp<=maxHp/2;
+    bossHp-=a.dmg*(berserkNow?2:1);
+    if(a.k==='guard') shield=true;
+    beep(a.dmg?820:520,.09,'square',.05);
+    if(bossHp<=0){ menuEl.className=''; return clearBoss(); }
+    startPhase(Math.max(1.2,a.secs-(has('brief')?1:0)));
+  });
+  paintHud();
+}
+
+function startPhase(secs){
+  menuEl.className=''; phEl.textContent='SURVIVE';
+  curSecs=secs; spawnAcc=0; bullets=[]; beams=[];
+  px=W/2; py=H*0.72; iframeUntil=performance.now()+400;
+  phaseEnd=performance.now()+secs*1000;
+  running=true; lastT=performance.now();
+  requestAnimationFrame(frame);
+}
+
+function endPhase(){
+  running=false; bullets=[]; beams=[];
+  ctx.clearRect(0,0,W,H);
+  showMenu();
+}
+
+function paintHud(){
+  hpEl.innerHTML='';
+  const rage=has('dmg')&&hp<=maxHp/2;
+  for(let i=0;i<maxHp;i++){
+    const p=document.createElement('div');
+    p.className='pip'+(i<hp?(rage?' rage':''):' gone'); hpEl.appendChild(p);
+  }
+  if(shield){const p=document.createElement('div');p.className='pip';p.style.background='#6FA8FF';hpEl.appendChild(p);}
+  bnEl.textContent=boss.name; bfEl.style.width=Math.max(0,bossHp/boss.hp*100)+'%';
+  scEl.textContent=(stage+1)+' / '+BOSSES.length;
+}
+
+function clearBoss(){
+  running=false;
+  if(stage>=BOSSES.length-1) return endRun(true);
+  const pool=BOONS.filter(b=>b.k!=='hp'||maxHp<6).sort(()=>Math.random()-.5).slice(0,3);
+  veil.className='on';
+  veil.innerHTML='<h2 style="color:var(--you)">'+boss.name+' DOWN</h2><div class="r">Take one.</div>'+
+    pool.map((b,i)=>'<button class="boon" data-i="'+i+'"><b>'+b.n+'</b><span>'+b.d+'</span></button>').join('');
+  veil.querySelectorAll('.boon').forEach(el=>el.onclick=()=>{
+    const b=pool[+el.dataset.i]; boons.push(b.k);
+    if(b.k==='hp'){maxHp++;hp=maxHp;}
+    if(b.k==='ward')shield=true;
+    stage++; beginBoss();
+  });
+}
+
+function endRun(won){
+  running=false; veil.className='on';
+  const mins=((performance.now()-runStart)/1000).toFixed(0);
+  if(won){
+    veil.innerHTML='<h2 style="color:var(--you)">THE WARDEN FALLS</h2>'+
+      '<div class="r">All five in <b>'+mins+'s</b>.<br>Deaths: <b>'+deaths+'</b>'+
+      '<br><br>Now clear it using only SURGE.</div><button class="btn">RUN AGAIN</button>';
+  }else{
+    deaths++; localStorage.setItem('vigil:deaths',String(deaths));
+    veil.innerHTML='<h2 style="color:var(--tell)">YOU DIED</h2>'+
+      '<div class="r">Fell to <b>'+boss.name+'</b>, stage <b>'+(stage+1)+'/'+BOSSES.length+'</b>.'+
+      '<br><br><b>'+boss.tell+'</b><br><br>'+
+      (bossHp<=2?'It was nearly done. That is the fight.'
+        :'Surge buys damage with time. Time is what killed you.')+
+      '<br><br><span style="color:var(--faint)">Deaths: '+deaths+'</span></div>'+
+      '<button class="btn">RUN AGAIN</button>';
+  }
+  veil.querySelector('.btn').onclick=newRun;
+}
+
+function beginBoss(){
+  boss=BOSSES[stage]; bossHp=boss.hp;
+  veil.className=''; bullets=[]; beams=[];
+  tipEl.textContent = stage===0 ? 'drag anywhere to move' : boss.tell.split('.')[0];
+  showMenu();
+}
+
+function newRun(){
+  stage=0; maxHp=3; hp=3; shield=false; boons=[]; runStart=performance.now();
+  beginBoss();
+}
+
+function intro(){
+  veil.className='on';
+  veil.innerHTML='<h2>VIGIL</h2><div class="r">'+
+    'Two phases, over and over.<br><br>'+
+    '<b>YOUR MOVE.</b> No timer. Pick an attack.<br>'+
+    '<b>SURVIVE.</b> Real time. Drag anywhere to move.<br><br>'+
+    'The attack you choose decides how long you must survive. '+
+    'STRIKE is three seconds. SURGE is seven and a half.<br><br>'+
+    '<span style="color:var(--faint)">Everything telegraphs before it fires.</span>'+
+    '</div><button class="btn">BEGIN</button>';
+  veil.querySelector('.btn').onclick=newRun;
+}
+
+fit(); window.addEventListener('resize',fit);
+intro();
+if('serviceWorker' in navigator)
+  window.addEventListener('load',()=>navigator.serviceWorker.register('../sw.js').catch(()=>{}));
+</script>
+</body>
+</html>
