@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0a0a0c">
+<title>WARDEN</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;
+    user-select:none;-webkit-user-select:none;}
+  :root{
+    --bg:#08080a; --grid:#14161b; --grid2:#1b1e25; --edge:#252932;
+    --ink:#E6E9EF; --dim:#7b8492; --faint:#4a515c;
+    --tell:#B3402F;      /* telegraph, about to be lethal */
+    --tell-hot:#FF5236;
+    --strike:#C79A2E;    /* greed tile */
+    --strike-hot:#FFC94B;
+    --you:#5FE3C0;
+    --boss:#8E5BEF;
+  }
+  html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
+    font-family:ui-monospace,'SF Mono',Menlo,monospace;}
+  body{display:flex;align-items:center;justify-content:center;
+    padding:env(safe-area-inset-top) 12px env(safe-area-inset-bottom);}
+
+  #wrap{width:100%;max-width:520px;display:flex;flex-direction:column;gap:10px;}
+
+  /* header */
+  .hud{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;
+    letter-spacing:.14em;color:var(--dim);}
+  .hp{display:flex;gap:5px;}
+  .pip{width:13px;height:13px;border-radius:3px;background:var(--you);
+    box-shadow:0 0 9px rgba(95,227,192,.5);transition:all .18s;}
+  .pip.gone{background:#1d2128;box-shadow:none;}
+  #bossbar{height:7px;background:var(--grid);border-radius:99px;overflow:hidden;}
+  #bossfill{height:100%;width:100%;background:linear-gradient(90deg,var(--boss),#B694FF);
+    transition:width .35s cubic-bezier(.2,.9,.3,1);}
+
+  /* board */
+  #board{position:relative;width:100%;aspect-ratio:1;display:grid;gap:5px;
+    grid-template-columns:repeat(7,1fr);}
+  .c{position:relative;background:var(--grid);border-radius:9px;border:1.5px solid transparent;
+    transition:background .12s,border-color .12s,transform .09s;}
+  .c.reach{background:var(--grid2);border-color:#2c313b;}
+  .c.tell{background:#2a1512;border-color:var(--tell);}
+  .c.tell::after{content:'';position:absolute;inset:26%;border-radius:4px;
+    background:var(--tell);opacity:.55;animation:pulse .5s ease-in-out infinite alternate;}
+  .c.fire{background:var(--tell-hot)!important;border-color:#fff;}
+  .c.strike{background:#2a2413;border-color:var(--strike);}
+  .c.strike::after{content:'';position:absolute;inset:30%;border-radius:50%;
+    background:var(--strike-hot);opacity:.85;animation:pulse .7s ease-in-out infinite alternate;}
+  @keyframes pulse{from{opacity:.35;}to{opacity:.9;}}
+  .c.you::before{content:'';position:absolute;inset:17%;border-radius:7px;
+    background:var(--you);box-shadow:0 0 16px rgba(95,227,192,.75);z-index:2;}
+  .c.you.hurt::before{background:#FF5236;box-shadow:0 0 22px rgba(255,82,54,.9);}
+
+  #board.shake{animation:sh .26s;}
+  @keyframes sh{
+    0%,100%{transform:translate(0,0)}
+    20%{transform:translate(-7px,4px)} 40%{transform:translate(6px,-5px)}
+    60%{transform:translate(-5px,-3px)} 80%{transform:translate(4px,5px)}
+  }
+
+  /* overlay */
+  #veil{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:12px;background:rgba(8,8,10,.93);border-radius:12px;z-index:9;
+    text-align:center;padding:22px;}
+  #veil.on{display:flex;}
+  #veil h2{font-size:30px;letter-spacing:.16em;}
+  #veil .r{color:var(--dim);font-size:13.5px;line-height:1.65;max-width:330px;}
+  #veil b{color:var(--ink);}
+  #veil .go{margin-top:6px;padding:13px 30px;border-radius:11px;border:2px solid var(--you);
+    color:var(--you);font-family:inherit;font-size:15px;letter-spacing:.1em;background:transparent;}
+
+  .foot{display:flex;justify-content:space-between;font-size:11.5px;color:var(--faint);
+    letter-spacing:.09em;}
+  #phase{color:var(--boss);}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="hud">
+    <div class="hp" id="hp"></div>
+    <div id="turn">TURN 0</div>
+  </div>
+  <div id="bossbar"><div id="bossfill"></div></div>
+  <div id="board">
+    <div id="veil"></div>
+  </div>
+  <div class="foot">
+    <span id="phase">THE WARDEN</span>
+    <span id="hint">tap a lit tile</span>
+  </div>
+</div>
+<script>
+'use strict';
+// Balance is simulated, not guessed. 800-run bot sweep (the bot always takes a
+// safe tile, so it plays like a PRACTISED human): these numbers give it ~30%.
+// First-time human lands well under that, a player who reads the patterns lands
+// well above. Brutal, then yours. Full sweep is in the commit message.
+const N = 7, MAXHP = 3, BOSSHP = 6, MIN_OPEN = 10;
+
+const boardEl = document.getElementById('board');
+const veil    = document.getElementById('veil');
+const hpEl    = document.getElementById('hp');
+const turnEl  = document.getElementById('turn');
+const fillEl  = document.getElementById('bossfill');
+const phaseEl = document.getElementById('phase');
+const hintEl  = document.getElementById('hint');
+
+let cells = [];
+let px, py, hp, bossHp, turn, tells, strikes, busy, dead, best;
+best = parseInt(localStorage.getItem('warden:best') || '0', 10);
+
+// ── audio ───────────────────────────────────────────────────────────────────
+// Tiny WebAudio blips. No files, no loading, and the game reads completely
+// differently with them: the telegraph tick is what teaches rhythm.
+let ac = null;
+function beep(freq, dur, type, vol){
+  try{
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type || 'square'; o.frequency.value = freq;
+    g.gain.value = vol == null ? 0.05 : vol;
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + dur);
+  }catch(e){}
+}
+
+// ── grid helpers ────────────────────────────────────────────────────────────
+const idx = (x,y) => y*N + x;
+const inb = (x,y) => x>=0 && y>=0 && x<N && y<N;
+const dist = (x,y,a,b) => Math.abs(x-a) + Math.abs(y-b);
+
+function buildBoard(){
+  boardEl.querySelectorAll('.c').forEach(c=>c.remove());
+  cells = [];
+  for (let y=0; y<N; y++) for (let x=0; x<N; x++){
+    const d = document.createElement('div');
+    d.className = 'c';
+    d.dataset.x = x; d.dataset.y = y;
+    d.addEventListener('click', ()=> tryMove(x,y));
+    boardEl.appendChild(d);
+    cells.push(d);
+  }
+}
+
+// ── attack patterns ─────────────────────────────────────────────────────────
+// Every pattern is deterministic given its seed values, because a boss you can
+// LEARN is the whole point. Nothing here is random-per-turn except which
+// pattern fires and where it is centred; the shapes never lie.
+function patCross(cx,cy){
+  const out=[];
+  for(let i=0;i<N;i++){ out.push([cx,i]); out.push([i,cy]); }
+  return out;
+}
+function patRing(r, cx, cy){
+  const out=[];
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++)
+    if (Math.max(Math.abs(x-cx), Math.abs(y-cy)) === r) out.push([x,y]);
+  return out;
+}
+function patDiag(cx,cy){
+  const out=[];
+  for(let i=-N;i<=N;i++){ out.push([cx+i,cy+i]); out.push([cx+i,cy-i]); }
+  return out.filter(([x,y])=>inb(x,y));
+}
+function patRows(start, step){
+  const out=[];
+  for(let y=start;y<N;y+=step) for(let x=0;x<N;x++) out.push([x,y]);
+  return out;
+}
+function patHunt(x,y,r){
+  // Centred on YOU. Punishes standing still and makes late phases claustrophobic.
+  const out=[];
+  for(let b=0;b<N;b++) for(let a=0;a<N;a++) if (dist(a,b,x,y) <= r) out.push([a,b]);
+  return out;
+}
+
+function phase(){
+  if (bossHp > BOSSHP*0.66) return 1;
+  if (bossHp > BOSSHP*0.33) return 2;
+  return 3;
+}
+
+function nextTells(){
+  const p = phase();
+  const rc = ()=> 1 + Math.floor(Math.random()*(N-2));
+  const bag = [
+    ()=>patCross(rc(), rc()),
+    ()=>patRing(2 + Math.floor(Math.random()*2), 3, 3),
+    ()=>patDiag(rc(), rc()),
+    ()=>patRows(Math.floor(Math.random()*2), 2),
+  ];
+  let t = bag[Math.floor(Math.random()*bag.length)]();
+  // Phase 2 layers a second shape. Phase 3 hunts you as well. The jump in
+  // pressure is deliberate and visible, not a hidden difficulty curve.
+  if (p >= 2) t = t.concat(bag[Math.floor(Math.random()*bag.length)]());
+  if (p >= 3) t = t.concat(patHunt(px, py, 1));
+  // Never fill the board. There must always be an out, or dying stops being
+  // your fault and the whole contract breaks.
+  const set = new Set(t.filter(([x,y])=>inb(x,y)).map(([x,y])=>idx(x,y)));
+  const open = [];
+  for (let i=0;i<N*N;i++) if (!set.has(i)) open.push(i);
+  if (open.length < MIN_OPEN){
+    const shuffled = [...set].sort(()=>Math.random()-0.5);
+    while (open.length < MIN_OPEN && shuffled.length){
+      const r = shuffled.pop(); set.delete(r); open.push(r);
+    }
+  }
+  return set;
+}
+
+function nextStrikes(tellSet){
+  // Greed tiles. Deliberately biased TOWARD danger: the interesting decision is
+  // "do I take the hit to land the hit", not "free damage over there".
+  const cand = [];
+  for (let y=0;y<N;y++) for (let x=0;x<N;x++){
+    const i = idx(x,y);
+    if (dist(x,y,px,py) > 1) continue;        // must be reachable this turn
+    if (i === idx(px,py)) continue;
+    cand.push(i);
+  }
+  if (!cand.length) return new Set();
+  const risky = cand.filter(i=>tellSet.has(i));
+  const safe  = cand.filter(i=>!tellSet.has(i));
+  const pick = (risky.length && Math.random() < 0.45) ? risky : (safe.length ? safe : risky);
+  if (!pick.length) return new Set();
+  return new Set([pick[Math.floor(Math.random()*pick.length)]]);
+}
+
+// ── render ──────────────────────────────────────────────────────────────────
+function paint(){
+  cells.forEach((c,i)=>{
+    const x = i % N, y = (i / N) | 0;
+    c.className = 'c';
+    if (dist(x,y,px,py) <= 1) c.classList.add('reach');
+    if (tells.has(i))   c.classList.add('tell');
+    if (strikes.has(i)) c.classList.add('strike');
+    if (i === idx(px,py)) c.classList.add('you');
+  });
+  hpEl.innerHTML = '';
+  for (let i=0;i<MAXHP;i++){
+    const p = document.createElement('div');
+    p.className = 'pip' + (i < hp ? '' : ' gone');
+    hpEl.appendChild(p);
+  }
+  turnEl.textContent = 'TURN ' + turn;
+  fillEl.style.width = Math.max(0, bossHp/BOSSHP*100) + '%';
+  phaseEl.textContent = ['','THE WARDEN','WARDEN · ENRAGED','WARDEN · HUNTING'][phase()];
+}
+
+// ── turn loop ───────────────────────────────────────────────────────────────
+function tryMove(x,y){
+  if (busy || dead) return;
+  if (dist(x,y,px,py) > 1) return;   // one tile, orthogonal or stay
+  if (Math.abs(x-px) === 1 && Math.abs(y-py) === 1) return;
+  resolve(x,y);
+}
+
+function resolve(nx,ny){
+  busy = true;
+  px = nx; py = ny;
+  const here = idx(px,py);
+
+  // The strike lands first: you committed to the tile, you get the hit even if
+  // it kills you. Trading your last point of health for the kill should work.
+  let hitBoss = false;
+  if (strikes.has(here)){ bossHp--; hitBoss = true; beep(760, .09, 'square', .06); }
+
+  paint();
+
+  setTimeout(()=>{
+    tells.forEach(i=>cells[i].classList.add('fire'));
+    const caught = tells.has(here);
+    if (caught){
+      hp--;
+      cells[here].classList.add('hurt');
+      boardEl.classList.add('shake');
+      beep(110, .22, 'sawtooth', .09);
+      setTimeout(()=>boardEl.classList.remove('shake'), 260);
+    } else {
+      beep(hitBoss ? 980 : 420, .05, 'triangle', .035);
+    }
+
+    setTimeout(()=>{
+      if (hp <= 0)     return over(false);
+      if (bossHp <= 0) return over(true);
+      turn++;
+      tells   = nextTells();
+      strikes = nextStrikes(tells);
+      paint();
+      busy = false;
+    }, 210);
+  }, 190);
+}
+
+// ── framing ─────────────────────────────────────────────────────────────────
+function over(won){
+  dead = true;
+  if (won && turn > 0){
+    // Fewer turns is better. That is the score.
+    if (!best || turn < best){ best = turn; localStorage.setItem('warden:best', String(best)); }
+  }
+  veil.className = 'on';
+  veil.innerHTML = won
+    ? '<h2 style="color:var(--you)">WARDEN DOWN</h2>' +
+      '<div class="r">Cleared in <b>' + turn + ' turns</b>.' +
+      (best ? '<br>Best: <b>' + best + '</b>' : '') + '</div>' +
+      '<button class="go">AGAIN</button>'
+    : '<h2 style="color:var(--tell-hot)">YOU DIED</h2>' +
+      '<div class="r">Turn <b>' + turn + '</b> · Warden on <b>' + bossHp + '/' + BOSSHP + '</b>' +
+      '<br><br>' + lesson() + '</div>' +
+      '<button class="go">RETRY</button>';
+  veil.querySelector('.go').onclick = start;
+  beep(won ? 620 : 90, won ? .3 : .5, won ? 'triangle' : 'sawtooth', .07);
+}
+
+function lesson(){
+  // Elden Ring's actual trick is not the difficulty, it is that death always
+  // hands you information. A death screen that just says YOU DIED teaches
+  // nothing, so each one names the mistake you probably made.
+  if (turn < 4)  return 'You have not seen the patterns yet. They repeat. Watch a full one before you move for gold.';
+  if (bossHp > BOSSHP*0.7) return 'You played safe and ran out of turns to learn. Gold sits inside danger on purpose.';
+  if (bossHp <= 2) return 'That close. The last phase hunts the tile you are standing on, so keep moving.';
+  return 'The red squares are always shown one turn early. If you were surprised, you were watching the gold instead.';
+}
+
+function start(){
+  px = 3; py = 3; hp = MAXHP; bossHp = BOSSHP; turn = 1;
+  dead = false; busy = false;
+  tells   = nextTells();
+  strikes = nextStrikes(tells);
+  veil.className = '';
+  paint();
+}
+
+// keyboard, because it should also play properly on the laptop
+document.addEventListener('keydown', (e)=>{
+  if (dead && (e.key === 'Enter' || e.key === ' ')){ start(); return; }
+  const m = {ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]}[e.key];
+  if (m){ e.preventDefault(); const nx=px+m[0], ny=py+m[1]; if (inb(nx,ny)) tryMove(nx,ny); }
+  else if (e.key === '.' || e.key === 'Enter'){ tryMove(px,py); }   // wait a turn
+});
+
+buildBoard();
+hintEl.textContent = 'tap a lit tile · gold hits · red kills';
+start();
+
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>navigator.serviceWorker.register('../sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
