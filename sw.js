@@ -31,7 +31,9 @@ const SHELLS = [
   './line-runner/',
   './line-runner/index.html',
   './jarvis/',
-  './jarvis/index.html'
+  './jarvis/index.html',
+  './scratch/',
+  './scratch/index.html'
 ];
 
 self.addEventListener('install', (e) => {

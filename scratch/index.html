@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
+<title>Scratch</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:600px; height:600px; overflow:hidden; background:#000; color:#fff;
+    font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; }
+  #app { width:600px; height:600px; display:flex; flex-direction:column; padding:22px 26px; }
+  h1 { font-size:26px; color:#00E5FF; letter-spacing:2px; flex:none; }
+  .sub { font-size:16px; color:#7d8790; margin:2px 0 14px; flex:none; }
+
+  /* The composer. A real textarea so the glasses hand off to the on-device
+     handwriting / voice composer (Meta v127 add-text-input) rather than us
+     trying to invent an input method. */
+  #pad { flex:1; width:100%; resize:none; background:#0a0a0a; color:#e8f6ff;
+    border:3px solid #2a3540; border-radius:14px; padding:14px 16px;
+    font-size:23px; line-height:1.35; font-family:inherit; outline:none; }
+  #pad:focus { border-color:#00E5FF; background:#06232b; }
+  #pad::placeholder { color:#4a545e; }
+
+  .row { flex:none; display:flex; gap:12px; margin-top:12px; }
+  .row button { flex:1; font-size:21px; padding:13px 0; border-radius:12px;
+    background:#0a0a0a; color:#e8f6ff; border:3px solid #2a3540; font-family:inherit; }
+  .row button.focused { background:#06232b; border-color:#00E5FF; }
+  .row button.go.focused { border-color:#00FF85; color:#9effc8; }
+
+  #stat { flex:none; margin-top:10px; font-size:17px; min-height:24px; color:#7d8790; }
+  #stat.ok { color:#00FF85; }
+  #stat.err { color:#FFC24B; }
+  .hint { flex:none; font-size:15px; color:#5a646e; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>SCRATCH</h1>
+  <div class="sub">write here, land it on the Mac clipboard</div>
+  <textarea id="pad" placeholder="Pinch to write or dictate…" spellcheck="false"></textarea>
+  <div class="row">
+    <button id="bSend" class="go focused">✓ Send to Mac</button>
+    <button id="bClear">Clear</button>
+  </div>
+  <div id="stat"></div>
+  <div class="hint">▲▼ switch button · ✓ press · Esc leaves the pad</div>
+</div>
+<script>
+'use strict';
+
+// Gateway config, shared with the jarvis app: either passed in the #c= link
+// from config.html, or already saved on this device.
+function b64uDecode(s){
+  s = s.replace(/-/g,'+').replace(/_/g,'/');
+  const bin = atob(s), bytes = new Uint8Array(bin.length);
+  for (let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+let cfg = null;
+(function(){
+  const packed = location.hash.startsWith('#c=') ? location.hash.slice(3)
+               : new URLSearchParams(location.search).get('c');
+  if (packed){
+    try { cfg = JSON.parse(b64uDecode(packed)); localStorage.setItem('jv:cfg', JSON.stringify(cfg)); } catch(e){}
+  }
+  if (!cfg){ try { cfg = JSON.parse(localStorage.getItem('jv:cfg')); } catch(e){} }
+})();
+
+const pad   = document.getElementById('pad');
+const stat  = document.getElementById('stat');
+const btns  = [document.getElementById('bSend'), document.getElementById('bClear')];
+let bIdx = 0;
+
+// Never lose a draft. The glasses can sleep, the app can be backgrounded, and
+// a half-dictated thought disappearing is the one thing that would stop this
+// being trusted. Restored on load, cleared only on a successful send.
+const DRAFT = 'scratch:draft';
+pad.value = localStorage.getItem(DRAFT) || '';
+pad.addEventListener('input', ()=> localStorage.setItem(DRAFT, pad.value));
+
+function paintButtons(){
+  btns.forEach((b,i)=> b.classList.toggle('focused', i===bIdx));
+}
+
+function say(msg, cls){
+  stat.textContent = msg;
+  stat.className = cls || '';
+}
+
+function send(){
+  const text = pad.value.trim();
+  if (!text){ say('nothing to send', 'err'); return; }
+  if (!cfg || !cfg.gw || !cfg.k){ say('no gateway — open config.html on your phone', 'err'); return; }
+
+  say('sending…');
+  const u = new URL(cfg.gw.replace(/\/$/,'') + '/v1/capture');
+  u.searchParams.set('k', cfg.k);
+  u.searchParams.set('t', text);
+
+  fetch(u).then(r=>r.json()).then(j=>{
+    if (!j.ok) throw new Error(j.error || 'refused');
+    // Only clear once the Mac has actually confirmed it. If the network was
+    // flaky the words stay on screen.
+    pad.value = '';
+    localStorage.removeItem(DRAFT);
+    say('✓ on the Mac clipboard' + (j.clipboard ? '' : ' (logged only)'), 'ok');
+  }).catch(e=>{
+    say('failed, text kept: ' + e.message, 'err');
+  });
+}
+
+btns[0].addEventListener('click', send);
+btns[1].addEventListener('click', ()=>{
+  pad.value=''; localStorage.removeItem(DRAFT); say('cleared');
+});
+
+document.addEventListener('keydown', (e)=>{
+  // While the composer has focus, let every key through to it. Otherwise
+  // ▲▼ would move the button selection instead of the caret.
+  if (document.activeElement === pad){
+    if (e.key === 'Escape'){ pad.blur(); say(''); }
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+    bIdx = (bIdx + (e.key==='ArrowDown' ? 1 : btns.length-1)) % btns.length;
+    paintButtons();
+  } else if (e.key === 'Enter'){
+    btns[bIdx].click();
+  } else if (e.key === 'ArrowRight'){
+    pad.focus();
+  }
+});
+
+paintButtons();
+
+// Offline support (2026-08-18, Meta v127 add-offline). The pad and the draft
+// work with no signal; only the send needs the network, and it says so.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('../sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
