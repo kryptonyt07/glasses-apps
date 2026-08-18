@@ -3,354 +3,388 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<meta name="theme-color" content="#0a0a0c">
+<meta name="theme-color" content="#08080a">
 <title>WARDEN</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;
     user-select:none;-webkit-user-select:none;}
   :root{
-    --bg:#08080a; --grid:#14161b; --grid2:#1b1e25; --edge:#252932;
-    --ink:#E6E9EF; --dim:#7b8492; --faint:#4a515c;
-    --tell:#B3402F;      /* telegraph, about to be lethal */
-    --tell-hot:#FF5236;
-    --strike:#C79A2E;    /* greed tile */
-    --strike-hot:#FFC94B;
-    --you:#5FE3C0;
-    --boss:#8E5BEF;
+    --bg:#08080a;
+    --tile:#191d25;        /* base tile, clearly visible against bg */
+    --tile-reach:#2b323e;  /* where you can move: obviously lighter */
+    --edge:#3a4250;
+    --ink:#EDF1F6; --dim:#8b95a3; --faint:#565f6c;
+    --danger:#7A1F14; --danger-line:#FF4A2E; --danger-fire:#FF6B4A;
+    --gold:#5C4410; --gold-line:#FFC94B;
+    --you:#4FE8C4;
+    --boss:#A06BFF;
   }
   html,body{height:100%;background:var(--bg);color:var(--ink);overflow:hidden;
     font-family:ui-monospace,'SF Mono',Menlo,monospace;}
   body{display:flex;align-items:center;justify-content:center;
     padding:env(safe-area-inset-top) 12px env(safe-area-inset-bottom);}
+  #wrap{width:100%;max-width:500px;display:flex;flex-direction:column;gap:9px;}
 
-  #wrap{width:100%;max-width:520px;display:flex;flex-direction:column;gap:10px;}
-
-  /* header */
-  .hud{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;
-    letter-spacing:.14em;color:var(--dim);}
+  .hud{display:flex;align-items:center;justify-content:space-between;font-size:11.5px;
+    letter-spacing:.13em;color:var(--dim);}
   .hp{display:flex;gap:5px;}
-  .pip{width:13px;height:13px;border-radius:3px;background:var(--you);
-    box-shadow:0 0 9px rgba(95,227,192,.5);transition:all .18s;}
-  .pip.gone{background:#1d2128;box-shadow:none;}
-  #bossbar{height:7px;background:var(--grid);border-radius:99px;overflow:hidden;}
-  #bossfill{height:100%;width:100%;background:linear-gradient(90deg,var(--boss),#B694FF);
-    transition:width .35s cubic-bezier(.2,.9,.3,1);}
+  .pip{width:14px;height:14px;border-radius:3px;background:var(--you);
+    box-shadow:0 0 10px rgba(79,232,196,.55);}
+  .pip.gone{background:#232833;box-shadow:none;}
+  .pip.shield{background:#6FA8FF;box-shadow:0 0 10px rgba(111,168,255,.6);}
 
-  /* board */
-  #board{position:relative;width:100%;aspect-ratio:1;display:grid;gap:5px;
-    grid-template-columns:repeat(7,1fr);}
-  .c{position:relative;background:var(--grid);border-radius:9px;border:1.5px solid transparent;
-    transition:background .12s,border-color .12s,transform .09s;}
-  .c.reach{background:var(--grid2);border-color:#2c313b;}
-  .c.tell{background:#2a1512;border-color:var(--tell);}
-  .c.tell::after{content:'';position:absolute;inset:26%;border-radius:4px;
-    background:var(--tell);opacity:.55;animation:pulse .5s ease-in-out infinite alternate;}
-  .c.fire{background:var(--tell-hot)!important;border-color:#fff;}
-  .c.strike{background:#2a2413;border-color:var(--strike);}
-  .c.strike::after{content:'';position:absolute;inset:30%;border-radius:50%;
-    background:var(--strike-hot);opacity:.85;animation:pulse .7s ease-in-out infinite alternate;}
-  @keyframes pulse{from{opacity:.35;}to{opacity:.9;}}
-  .c.you::before{content:'';position:absolute;inset:17%;border-radius:7px;
-    background:var(--you);box-shadow:0 0 16px rgba(95,227,192,.75);z-index:2;}
-  .c.you.hurt::before{background:#FF5236;box-shadow:0 0 22px rgba(255,82,54,.9);}
+  .bossline{display:flex;align-items:center;gap:9px;}
+  .bossname{font-size:12.5px;letter-spacing:.15em;color:var(--boss);white-space:nowrap;}
+  #bossbar{flex:1;height:8px;background:#171b22;border-radius:99px;overflow:hidden;}
+  #bossfill{height:100%;background:linear-gradient(90deg,var(--boss),#C9A8FF);
+    transition:width .3s cubic-bezier(.2,.9,.3,1);}
 
-  #board.shake{animation:sh .26s;}
-  @keyframes sh{
-    0%,100%{transform:translate(0,0)}
-    20%{transform:translate(-7px,4px)} 40%{transform:translate(6px,-5px)}
-    60%{transform:translate(-5px,-3px)} 80%{transform:translate(4px,5px)}
-  }
+  #board{position:relative;width:100%;aspect-ratio:1;display:grid;gap:6px;}
+  .c{position:relative;background:var(--tile);border-radius:8px;
+    border:2px solid transparent;transition:background .1s,border-color .1s;}
+  .c.reach{background:var(--tile-reach);border-color:var(--edge);}
+  /* DANGER: unmistakable. Red fill, red border, and a big X so it reads even
+     for colourblind eyes and in bright sun on a phone. */
+  .c.tell{background:var(--danger);border-color:var(--danger-line);}
+  .c.tell::after{content:'✕';position:absolute;inset:0;display:flex;align-items:center;
+    justify-content:center;color:var(--danger-line);font-size:min(5.2vw,26px);font-weight:700;
+    animation:thr .55s ease-in-out infinite alternate;}
+  @keyframes thr{from{opacity:.55;transform:scale(.9)}to{opacity:1;transform:scale(1.05)}}
+  .c.fire{background:var(--danger-fire)!important;border-color:#fff!important;}
+  .c.fire::after{color:#fff;}
+  /* GOLD: filled circle, thick border. Never ambiguous against danger. */
+  .c.strike{background:var(--gold);border-color:var(--gold-line);}
+  .c.strike::before{content:'';position:absolute;inset:28%;border-radius:50%;
+    background:var(--gold-line);box-shadow:0 0 12px rgba(255,201,75,.7);
+    animation:thr .8s ease-in-out infinite alternate;}
+  /* A tile can be BOTH. That is the whole game, so it must look like both. */
+  .c.tell.strike{background:var(--danger);border-color:var(--gold-line);}
+  .c.you{outline:3px solid var(--you);outline-offset:-3px;}
+  .c.you::before{content:'';position:absolute;inset:22%;border-radius:6px;
+    background:var(--you);box-shadow:0 0 18px rgba(79,232,196,.85);z-index:3;
+    animation:none;}
+  .c.you.hurt::before{background:#FF4A2E;box-shadow:0 0 24px rgba(255,74,46,.95);}
 
-  /* overlay */
-  #veil{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
-    flex-direction:column;gap:12px;background:rgba(8,8,10,.93);border-radius:12px;z-index:9;
-    text-align:center;padding:22px;}
+  #board.shake{animation:sh .25s;}
+  @keyframes sh{0%,100%{transform:translate(0,0)}25%{transform:translate(-6px,4px)}
+    50%{transform:translate(5px,-5px)}75%{transform:translate(-4px,-3px)}}
+
+  #veil{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
+    justify-content:center;gap:11px;background:rgba(8,8,10,.955);border-radius:10px;
+    z-index:9;text-align:center;padding:20px;}
   #veil.on{display:flex;}
-  #veil h2{font-size:30px;letter-spacing:.16em;}
-  #veil .r{color:var(--dim);font-size:13.5px;line-height:1.65;max-width:330px;}
+  #veil h2{font-size:clamp(21px,5.6vw,30px);letter-spacing:.14em;}
+  #veil .r{color:var(--dim);font-size:13px;line-height:1.7;max-width:340px;}
   #veil b{color:var(--ink);}
-  #veil .go{margin-top:6px;padding:13px 30px;border-radius:11px;border:2px solid var(--you);
-    color:var(--you);font-family:inherit;font-size:15px;letter-spacing:.1em;background:transparent;}
+  .btn{padding:12px 26px;border-radius:10px;border:2px solid var(--you);color:var(--you);
+    font-family:inherit;font-size:14px;letter-spacing:.1em;background:transparent;}
+  .boons{display:flex;flex-direction:column;gap:8px;width:100%;max-width:330px;}
+  .boon{padding:11px 14px;border-radius:10px;border:2px solid var(--edge);
+    background:#141821;text-align:left;font-family:inherit;color:var(--ink);font-size:13.5px;}
+  .boon b{display:block;color:var(--you);letter-spacing:.08em;margin-bottom:2px;font-size:12.5px;}
+  .boon span{color:var(--dim);font-size:12px;line-height:1.45;}
 
-  .foot{display:flex;justify-content:space-between;font-size:11.5px;color:var(--faint);
-    letter-spacing:.09em;}
-  #phase{color:var(--boss);}
+  .legend{display:flex;justify-content:center;gap:14px;font-size:10.5px;color:var(--faint);
+    letter-spacing:.05em;flex-wrap:wrap;}
+  .legend i{font-style:normal;display:inline-flex;align-items:center;gap:4px;}
+  .sw{width:11px;height:11px;border-radius:3px;border:2px solid;}
+  .foot{display:flex;justify-content:space-between;font-size:11px;color:var(--faint);
+    letter-spacing:.07em;}
+  #tip{color:var(--gold-line);}
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div class="hud">
-    <div class="hp" id="hp"></div>
-    <div id="turn">TURN 0</div>
+  <div class="hud"><div class="hp" id="hp"></div><div id="turn">TURN 1</div></div>
+  <div class="bossline">
+    <span class="bossname" id="bossname">SENTRY</span>
+    <div id="bossbar"><div id="bossfill"></div></div>
   </div>
-  <div id="bossbar"><div id="bossfill"></div></div>
-  <div id="board">
-    <div id="veil"></div>
+  <div id="board"><div id="veil"></div></div>
+  <div class="legend">
+    <i><span class="sw" style="background:var(--danger);border-color:var(--danger-line)"></span>kills next turn</i>
+    <i><span class="sw" style="background:var(--gold);border-color:var(--gold-line)"></span>damages boss</i>
+    <i><span class="sw" style="background:var(--you);border-color:var(--you)"></span>you</i>
   </div>
-  <div class="foot">
-    <span id="phase">THE WARDEN</span>
-    <span id="hint">tap a lit tile</span>
-  </div>
+  <div class="foot"><span id="stage">1 / 5</span><span id="tip"></span></div>
 </div>
 <script>
 'use strict';
-// Balance is simulated, not guessed. 800-run bot sweep (the bot always takes a
-// safe tile, so it plays like a PRACTISED human): these numbers give it ~30%.
-// First-time human lands well under that, a player who reads the patterns lands
-// well above. Brutal, then yours. Full sweep is in the commit message.
-const N = 7, MAXHP = 3, BOSSHP = 6, MIN_OPEN = 10;
 
-const boardEl = document.getElementById('board');
-const veil    = document.getElementById('veil');
-const hpEl    = document.getElementById('hp');
-const turnEl  = document.getElementById('turn');
-const fillEl  = document.getElementById('bossfill');
-const phaseEl = document.getElementById('phase');
-const hintEl  = document.getElementById('hint');
+// ── bosses ──────────────────────────────────────────────────────────────────
+// Each boss owns a SIGNATURE set of shapes. That is the whole point: Sentry
+// teaches you something Lattice does not, so knowledge earned on one carries
+// but does not trivialise the next. Random-soup-from-a-bag (the first build)
+// meant every fight felt the same and nothing was learnable.
+const BOSSES = [
+  // Sentry is the teacher. Simulation had it killing MORE than Choir (8% vs
+  // 1.2%), which is backwards for a first boss, so it is deliberately gentle:
+  // widest escape floor, lowest greed pressure. Learn the loop here.
+  { name:'SENTRY',  n:5, hp:5,  layers:1, hunt:0, open:15, risk:.22,
+    shapes:['cross'],
+    tell:'It fires a full row and column. Stand off both.' },
+  { name:'CHOIR',   n:6, hp:7,  layers:1, hunt:0, open:11, risk:.42,
+    shapes:['ring','cross'],
+    tell:'Rings collapse inward. The centre is not always safe.' },
+  { name:'LATTICE', n:7, hp:9,  layers:2, hunt:0, open:11, risk:.48,
+    shapes:['diag','rows','cross'],
+    tell:'Two shapes at once. Find the overlap gap, not the empty half.' },
+  { name:'HOUND',   n:7, hp:10, layers:2, hunt:1, open:10, risk:.5,
+    shapes:['diag','rows','ring'],
+    tell:'It bites where you STAND. Never end a turn still.' },
+  { name:'WARDEN',  n:7, hp:13, layers:2, hunt:1, open:9,  risk:.55,
+    shapes:['cross','ring','diag','rows'],
+    tell:'Everything, layered, and it hunts. You have done this before.' },
+];
 
-let cells = [];
-let px, py, hp, bossHp, turn, tells, strikes, busy, dead, best;
-best = parseInt(localStorage.getItem('warden:best') || '0', 10);
+const BOONS = [
+  { k:'hp',     name:'VITALITY',   desc:'+1 maximum health, healed to full.' },
+  { k:'heal',   name:'MEND',       desc:'Heal to full and gain a shield that eats one hit.' },
+  { k:'dmg',    name:'HEAVY HAND', desc:'Gold tiles deal 2 damage instead of 1.' },
+  { k:'reach',  name:'STRIDE',     desc:'Move up to 2 tiles in a straight line.' },
+  { k:'sight',  name:'FORESIGHT',  desc:'One extra gold tile appears every turn.' },
+  { k:'shield', name:'WARDING',    desc:'Gain a shield that absorbs one hit, each fight.' },
+];
 
-// ── audio ───────────────────────────────────────────────────────────────────
-// Tiny WebAudio blips. No files, no loading, and the game reads completely
-// differently with them: the telegraph tick is what teaches rhythm.
-let ac = null;
-function beep(freq, dur, type, vol){
-  try{
-    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
-    const o = ac.createOscillator(), g = ac.createGain();
-    o.type = type || 'square'; o.frequency.value = freq;
-    g.gain.value = vol == null ? 0.05 : vol;
-    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
-    o.connect(g); g.connect(ac.destination);
-    o.start(); o.stop(ac.currentTime + dur);
-  }catch(e){}
+// ── state ───────────────────────────────────────────────────────────────────
+const boardEl=document.getElementById('board'), veil=document.getElementById('veil');
+const hpEl=document.getElementById('hp'), turnEl=document.getElementById('turn');
+const fillEl=document.getElementById('bossfill'), nameEl=document.getElementById('bossname');
+const stageEl=document.getElementById('stage'), tipEl=document.getElementById('tip');
+
+let N, cells, px, py, hp, maxHp, shield, bossHp, boss, stage, turn;
+let tells, strikes, busy, over, boons, deaths, runTurns;
+deaths = parseInt(localStorage.getItem('warden:deaths')||'0',10);
+const bestRun = parseInt(localStorage.getItem('warden:bestrun')||'0',10);
+
+const idx=(x,y)=>y*N+x, inb=(x,y)=>x>=0&&y>=0&&x<N&&y<N;
+const md=(x,y,a,b)=>Math.abs(x-a)+Math.abs(y-b);
+const has=k=>boons.includes(k);
+
+let ac=null;
+function beep(f,d,t,v){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+  const o=ac.createOscillator(),g=ac.createGain();o.type=t||'square';o.frequency.value=f;
+  g.gain.value=v==null?.05:v;g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+d);
+  o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}}
+
+// ── shapes ──────────────────────────────────────────────────────────────────
+const rc=()=>1+Math.floor(Math.random()*(N-2));
+function shape(kind){
+  const o=[];
+  if(kind==='cross'){const cx=rc(),cy=rc();
+    for(let i=0;i<N;i++){o.push([cx,i]);o.push([i,cy]);}}
+  else if(kind==='ring'){const r=1+Math.floor(Math.random()*(Math.floor(N/2)));
+    const c=(N-1)/2|0;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++)
+      if(Math.max(Math.abs(x-c),Math.abs(y-c))===r)o.push([x,y]);}
+  else if(kind==='diag'){const cx=rc(),cy=rc();
+    for(let i=-N;i<=N;i++){o.push([cx+i,cy+i]);o.push([cx+i,cy-i]);}}
+  else if(kind==='rows'){const s=Math.random()<.5?0:1;
+    const vert=Math.random()<.5;
+    for(let a=s;a<N;a+=2)for(let b=0;b<N;b++)o.push(vert?[a,b]:[b,a]);}
+  return o.filter(([x,y])=>inb(x,y));
 }
 
-// ── grid helpers ────────────────────────────────────────────────────────────
-const idx = (x,y) => y*N + x;
-const inb = (x,y) => x>=0 && y>=0 && x<N && y<N;
-const dist = (x,y,a,b) => Math.abs(x-a) + Math.abs(y-b);
-
-function buildBoard(){
-  boardEl.querySelectorAll('.c').forEach(c=>c.remove());
-  cells = [];
-  for (let y=0; y<N; y++) for (let x=0; x<N; x++){
-    const d = document.createElement('div');
-    d.className = 'c';
-    d.dataset.x = x; d.dataset.y = y;
-    d.addEventListener('click', ()=> tryMove(x,y));
-    boardEl.appendChild(d);
-    cells.push(d);
+function buildTells(){
+  let t=[];
+  for(let i=0;i<boss.layers;i++)
+    t=t.concat(shape(boss.shapes[Math.floor(Math.random()*boss.shapes.length)]));
+  if(boss.hunt) for(let b=0;b<N;b++)for(let a=0;a<N;a++)
+    if(md(a,b,px,py)<=boss.hunt)t.push([a,b]);
+  const s=new Set(t.map(([x,y])=>idx(x,y)));
+  // Guarantee an escape. A death you could not avoid breaks the contract the
+  // whole genre rests on, so the floor is enforced, never hoped for.
+  const open=[];for(let i=0;i<N*N;i++)if(!s.has(i))open.push(i);
+  if(open.length<boss.open){
+    const sh=[...s].sort(()=>Math.random()-.5);
+    while(open.length<boss.open&&sh.length){const r=sh.pop();s.delete(r);open.push(r);}
   }
+  return s;
 }
 
-// ── attack patterns ─────────────────────────────────────────────────────────
-// Every pattern is deterministic given its seed values, because a boss you can
-// LEARN is the whole point. Nothing here is random-per-turn except which
-// pattern fires and where it is centred; the shapes never lie.
-function patCross(cx,cy){
-  const out=[];
-  for(let i=0;i<N;i++){ out.push([cx,i]); out.push([i,cy]); }
-  return out;
-}
-function patRing(r, cx, cy){
-  const out=[];
-  for(let y=0;y<N;y++) for(let x=0;x<N;x++)
-    if (Math.max(Math.abs(x-cx), Math.abs(y-cy)) === r) out.push([x,y]);
-  return out;
-}
-function patDiag(cx,cy){
-  const out=[];
-  for(let i=-N;i<=N;i++){ out.push([cx+i,cy+i]); out.push([cx+i,cy-i]); }
-  return out.filter(([x,y])=>inb(x,y));
-}
-function patRows(start, step){
-  const out=[];
-  for(let y=start;y<N;y+=step) for(let x=0;x<N;x++) out.push([x,y]);
-  return out;
-}
-function patHunt(x,y,r){
-  // Centred on YOU. Punishes standing still and makes late phases claustrophobic.
-  const out=[];
-  for(let b=0;b<N;b++) for(let a=0;a<N;a++) if (dist(a,b,x,y) <= r) out.push([a,b]);
-  return out;
-}
-
-function phase(){
-  if (bossHp > BOSSHP*0.66) return 1;
-  if (bossHp > BOSSHP*0.33) return 2;
-  return 3;
-}
-
-function nextTells(){
-  const p = phase();
-  const rc = ()=> 1 + Math.floor(Math.random()*(N-2));
-  const bag = [
-    ()=>patCross(rc(), rc()),
-    ()=>patRing(2 + Math.floor(Math.random()*2), 3, 3),
-    ()=>patDiag(rc(), rc()),
-    ()=>patRows(Math.floor(Math.random()*2), 2),
-  ];
-  let t = bag[Math.floor(Math.random()*bag.length)]();
-  // Phase 2 layers a second shape. Phase 3 hunts you as well. The jump in
-  // pressure is deliberate and visible, not a hidden difficulty curve.
-  if (p >= 2) t = t.concat(bag[Math.floor(Math.random()*bag.length)]());
-  if (p >= 3) t = t.concat(patHunt(px, py, 1));
-  // Never fill the board. There must always be an out, or dying stops being
-  // your fault and the whole contract breaks.
-  const set = new Set(t.filter(([x,y])=>inb(x,y)).map(([x,y])=>idx(x,y)));
-  const open = [];
-  for (let i=0;i<N*N;i++) if (!set.has(i)) open.push(i);
-  if (open.length < MIN_OPEN){
-    const shuffled = [...set].sort(()=>Math.random()-0.5);
-    while (open.length < MIN_OPEN && shuffled.length){
-      const r = shuffled.pop(); set.delete(r); open.push(r);
+function reachable(){
+  const out=[[px,py]];
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  for(const [dx,dy] of dirs){
+    for(let step=1; step<=(has('reach')?2:1); step++){
+      const x=px+dx*step,y=py+dy*step;
+      if(!inb(x,y))break;
+      out.push([x,y]);
     }
   }
-  return set;
+  return out;
 }
 
-function nextStrikes(tellSet){
-  // Greed tiles. Deliberately biased TOWARD danger: the interesting decision is
-  // "do I take the hit to land the hit", not "free damage over there".
-  const cand = [];
-  for (let y=0;y<N;y++) for (let x=0;x<N;x++){
-    const i = idx(x,y);
-    if (dist(x,y,px,py) > 1) continue;        // must be reachable this turn
-    if (i === idx(px,py)) continue;
-    cand.push(i);
+function buildStrikes(t){
+  const cand=reachable().filter(([x,y])=>!(x===px&&y===py));
+  if(!cand.length)return new Set();
+  const risky=cand.filter(([x,y])=>t.has(idx(x,y)));
+  const safe =cand.filter(([x,y])=>!t.has(idx(x,y)));
+  const out=new Set();
+  const n=has('sight')?2:1;
+  for(let i=0;i<n;i++){
+    const pool=(risky.length&&Math.random()<boss.risk)?risky:(safe.length?safe:risky);
+    if(pool.length){const p=pool[Math.floor(Math.random()*pool.length)];out.add(idx(p[0],p[1]));}
   }
-  if (!cand.length) return new Set();
-  const risky = cand.filter(i=>tellSet.has(i));
-  const safe  = cand.filter(i=>!tellSet.has(i));
-  const pick = (risky.length && Math.random() < 0.45) ? risky : (safe.length ? safe : risky);
-  if (!pick.length) return new Set();
-  return new Set([pick[Math.floor(Math.random()*pick.length)]]);
+  return out;
 }
 
 // ── render ──────────────────────────────────────────────────────────────────
-function paint(){
-  cells.forEach((c,i)=>{
-    const x = i % N, y = (i / N) | 0;
-    c.className = 'c';
-    if (dist(x,y,px,py) <= 1) c.classList.add('reach');
-    if (tells.has(i))   c.classList.add('tell');
-    if (strikes.has(i)) c.classList.add('strike');
-    if (i === idx(px,py)) c.classList.add('you');
-  });
-  hpEl.innerHTML = '';
-  for (let i=0;i<MAXHP;i++){
-    const p = document.createElement('div');
-    p.className = 'pip' + (i < hp ? '' : ' gone');
-    hpEl.appendChild(p);
+function buildBoard(){
+  boardEl.querySelectorAll('.c').forEach(c=>c.remove());
+  boardEl.style.gridTemplateColumns=`repeat(${N},1fr)`;
+  cells=[];
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const d=document.createElement('div');d.className='c';
+    d.addEventListener('click',()=>tryMove(x,y));
+    boardEl.appendChild(d);cells.push(d);
   }
-  turnEl.textContent = 'TURN ' + turn;
-  fillEl.style.width = Math.max(0, bossHp/BOSSHP*100) + '%';
-  phaseEl.textContent = ['','THE WARDEN','WARDEN · ENRAGED','WARDEN · HUNTING'][phase()];
+}
+function paint(){
+  const reach=new Set(reachable().map(([x,y])=>idx(x,y)));
+  cells.forEach((c,i)=>{
+    c.className='c';
+    if(reach.has(i))c.classList.add('reach');
+    if(tells.has(i))c.classList.add('tell');
+    if(strikes.has(i))c.classList.add('strike');
+    if(i===idx(px,py))c.classList.add('you');
+  });
+  hpEl.innerHTML='';
+  for(let i=0;i<maxHp;i++){
+    const p=document.createElement('div');
+    p.className='pip'+(i<hp?'':' gone');hpEl.appendChild(p);
+  }
+  if(shield){const p=document.createElement('div');p.className='pip shield';hpEl.appendChild(p);}
+  turnEl.textContent='TURN '+turn;
+  fillEl.style.width=Math.max(0,bossHp/boss.hp*100)+'%';
+  nameEl.textContent=boss.name;
+  stageEl.textContent=(stage+1)+' / '+BOSSES.length;
 }
 
-// ── turn loop ───────────────────────────────────────────────────────────────
+// ── turn ────────────────────────────────────────────────────────────────────
 function tryMove(x,y){
-  if (busy || dead) return;
-  if (dist(x,y,px,py) > 1) return;   // one tile, orthogonal or stay
-  if (Math.abs(x-px) === 1 && Math.abs(y-py) === 1) return;
-  resolve(x,y);
+  if(busy||over)return;
+  if(!reachable().some(([a,b])=>a===x&&b===y))return;
+  step(x,y);
 }
-
-function resolve(nx,ny){
-  busy = true;
-  px = nx; py = ny;
-  const here = idx(px,py);
-
-  // The strike lands first: you committed to the tile, you get the hit even if
-  // it kills you. Trading your last point of health for the kill should work.
-  let hitBoss = false;
-  if (strikes.has(here)){ bossHp--; hitBoss = true; beep(760, .09, 'square', .06); }
-
+function step(nx,ny){
+  busy=true;px=nx;py=ny;
+  const here=idx(px,py);
+  if(strikes.has(here)){bossHp-=has('dmg')?2:1;beep(780,.09,'square',.06);}
   paint();
-
   setTimeout(()=>{
     tells.forEach(i=>cells[i].classList.add('fire'));
-    const caught = tells.has(here);
-    if (caught){
-      hp--;
-      cells[here].classList.add('hurt');
+    if(tells.has(here)){
+      if(shield){shield=false;beep(430,.16,'triangle',.07);}
+      else{hp--;cells[here].classList.add('hurt');beep(105,.24,'sawtooth',.09);}
       boardEl.classList.add('shake');
-      beep(110, .22, 'sawtooth', .09);
-      setTimeout(()=>boardEl.classList.remove('shake'), 260);
-    } else {
-      beep(hitBoss ? 980 : 420, .05, 'triangle', .035);
+      setTimeout(()=>boardEl.classList.remove('shake'),250);
     }
-
     setTimeout(()=>{
-      if (hp <= 0)     return over(false);
-      if (bossHp <= 0) return over(true);
-      turn++;
-      tells   = nextTells();
-      strikes = nextStrikes(tells);
-      paint();
-      busy = false;
-    }, 210);
-  }, 190);
+      if(hp<=0)return died();
+      if(bossHp<=0)return cleared();
+      turn++;runTurns++;
+      tells=buildTells();strikes=buildStrikes(tells);
+      paint();busy=false;
+    },200);
+  },185);
 }
 
-// ── framing ─────────────────────────────────────────────────────────────────
-function over(won){
-  dead = true;
-  if (won && turn > 0){
-    // Fewer turns is better. That is the score.
-    if (!best || turn < best){ best = turn; localStorage.setItem('warden:best', String(best)); }
-  }
-  veil.className = 'on';
-  veil.innerHTML = won
-    ? '<h2 style="color:var(--you)">WARDEN DOWN</h2>' +
-      '<div class="r">Cleared in <b>' + turn + ' turns</b>.' +
-      (best ? '<br>Best: <b>' + best + '</b>' : '') + '</div>' +
-      '<button class="go">AGAIN</button>'
-    : '<h2 style="color:var(--tell-hot)">YOU DIED</h2>' +
-      '<div class="r">Turn <b>' + turn + '</b> · Warden on <b>' + bossHp + '/' + BOSSHP + '</b>' +
-      '<br><br>' + lesson() + '</div>' +
-      '<button class="go">RETRY</button>';
-  veil.querySelector('.go').onclick = start;
-  beep(won ? 620 : 90, won ? .3 : .5, won ? 'triangle' : 'sawtooth', .07);
+// ── flow ────────────────────────────────────────────────────────────────────
+function startFight(){
+  boss=BOSSES[stage];N=boss.n;bossHp=boss.hp;turn=1;
+  shield=has('shield')?true:shield;
+  buildBoard();
+  px=(N-1)/2|0;py=(N-1)/2|0;
+  tells=buildTells();strikes=buildStrikes(tells);
+  over=false;busy=false;
+  tipEl.textContent=stage===0?'red = death next turn':'';
+  veil.className='';paint();
 }
 
-function lesson(){
-  // Elden Ring's actual trick is not the difficulty, it is that death always
-  // hands you information. A death screen that just says YOU DIED teaches
-  // nothing, so each one names the mistake you probably made.
-  if (turn < 4)  return 'You have not seen the patterns yet. They repeat. Watch a full one before you move for gold.';
-  if (bossHp > BOSSHP*0.7) return 'You played safe and ran out of turns to learn. Gold sits inside danger on purpose.';
-  if (bossHp <= 2) return 'That close. The last phase hunts the tile you are standing on, so keep moving.';
-  return 'The red squares are always shown one turn early. If you were surprised, you were watching the gold instead.';
+function cleared(){
+  over=true;beep(660,.25,'triangle',.07);
+  if(stage>=BOSSES.length-1)return runWon();
+  // Boon draft. Three of six, so a run has a shape you chose rather than a
+  // shape you were dealt.
+  const pool=BOONS.filter(b=>b.k!=='hp'||maxHp<6).sort(()=>Math.random()-.5).slice(0,3);
+  veil.className='on';
+  veil.innerHTML='<h2 style="color:var(--you)">'+boss.name+' DOWN</h2>'+
+    '<div class="r">Take one.</div><div class="boons">'+
+    pool.map((b,i)=>'<button class="boon" data-i="'+i+'"><b>'+b.name+'</b><span>'+b.desc+'</span></button>').join('')+
+    '</div>';
+  veil.querySelectorAll('.boon').forEach(el=>el.onclick=()=>{
+    const b=pool[+el.dataset.i];
+    boons.push(b.k);
+    if(b.k==='hp'){maxHp++;hp=maxHp;}
+    if(b.k==='heal'){hp=maxHp;shield=true;}
+    if(b.k==='shield')shield=true;
+    stage++;startFight();
+  });
 }
 
-function start(){
-  px = 3; py = 3; hp = MAXHP; bossHp = BOSSHP; turn = 1;
-  dead = false; busy = false;
-  tells   = nextTells();
-  strikes = nextStrikes(tells);
-  veil.className = '';
-  paint();
+function died(){
+  over=true;deaths++;localStorage.setItem('warden:deaths',String(deaths));
+  beep(85,.5,'sawtooth',.08);
+  veil.className='on';
+  veil.innerHTML='<h2 style="color:var(--danger-fire)">YOU DIED</h2>'+
+    '<div class="r">Fell to <b>'+boss.name+'</b>, stage <b>'+(stage+1)+' of '+BOSSES.length+'</b>.'+
+    '<br><br><b>'+boss.tell+'</b>'+
+    '<br><br>'+coach()+
+    '<br><br><span style="color:var(--faint)">Deaths: '+deaths+
+    (bestRun?' · furthest: stage '+bestRun:'')+'</span></div>'+
+    '<button class="btn">RUN AGAIN</button>';
+  veil.querySelector('.btn').onclick=newRun;
 }
 
-// keyboard, because it should also play properly on the laptop
-document.addEventListener('keydown', (e)=>{
-  if (dead && (e.key === 'Enter' || e.key === ' ')){ start(); return; }
-  const m = {ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]}[e.key];
-  if (m){ e.preventDefault(); const nx=px+m[0], ny=py+m[1]; if (inb(nx,ny)) tryMove(nx,ny); }
-  else if (e.key === '.' || e.key === 'Enter'){ tryMove(px,py); }   // wait a turn
+function coach(){
+  if(turn<4)return 'You moved before you read the board. The red is always shown a turn early.';
+  if(bossHp>boss.hp*.7)return 'You dodged well and never went for gold. Safe loses slowly.';
+  if(bossHp<=2)return 'One tile from it. That is the fight, not bad luck.';
+  return 'Gold sits inside danger on purpose. Decide before you tap, not after.';
+}
+
+function runWon(){
+  over=true;
+  localStorage.setItem('warden:bestrun',String(BOSSES.length));
+  veil.className='on';
+  veil.innerHTML='<h2 style="color:var(--you)">THE WARDEN FALLS</h2>'+
+    '<div class="r">All five, one run, <b>'+runTurns+' turns</b>.'+
+    '<br>Deaths along the way: <b>'+deaths+'</b>.'+
+    '<br><br>Now do it without Vitality.</div>'+
+    '<button class="btn">RUN AGAIN</button>';
+  veil.querySelector('.btn').onclick=newRun;
+}
+
+function newRun(){
+  stage=0;maxHp=3;hp=3;shield=false;boons=[];runTurns=0;
+  if(stage+1>bestRun)localStorage.setItem('warden:bestrun',String(Math.max(bestRun,1)));
+  startFight();
+}
+
+function intro(){
+  N=5;buildBoard();
+  veil.className='on';
+  veil.innerHTML='<h2>WARDEN</h2>'+
+    '<div class="r">Five bosses. One run. Death sends you back to the first.'+
+    '<br><br><b>Red tiles kill you next turn.</b> They are always shown one turn early.'+
+    '<br><b>Gold tiles damage the boss</b>, and sit inside the red on purpose.'+
+    '<br><br>You move one tile per turn. Standing still is a move.'+
+    '<br><br><span style="color:var(--faint)">Every boss fights differently. Learn it, or keep dying.</span></div>'+
+    '<button class="btn">BEGIN</button>';
+  veil.querySelector('.btn').onclick=newRun;
+}
+
+document.addEventListener('keydown',e=>{
+  if(over){if(e.key==='Enter'||e.key===' '){const b=veil.querySelector('.btn');if(b)b.click();}return;}
+  const m={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0]}[e.key];
+  if(m){e.preventDefault();const x=px+m[0],y=py+m[1];if(inb(x,y))tryMove(x,y);}
+  else if(e.key==='.'||e.key==='Enter')tryMove(px,py);
 });
 
-buildBoard();
-hintEl.textContent = 'tap a lit tile · gold hits · red kills';
-start();
-
-if ('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>navigator.serviceWorker.register('../sw.js').catch(()=>{}));
-}
+intro();
+if('serviceWorker' in navigator)
+  window.addEventListener('load',()=>navigator.serviceWorker.register('../sw.js').catch(()=>{}));
 </script>
 </body>
 </html>
