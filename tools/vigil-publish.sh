@@ -33,10 +33,13 @@ fi
 
 command -v butler >/dev/null || { echo "butler not on PATH (expected ~/.local/bin/butler)" >&2; exit 1; }
 
-# Fail loudly on missing auth rather than letting butler push into a 401. This
-# is the class of bug that has bitten this repo before: a guard that returns
-# quietly and lets the caller believe it worked.
-if [ ! -f "$HOME/.config/itch/butler_creds" ]; then
+# Fail loudly on missing auth rather than letting butler push into a 401.
+#
+# Ask BUTLER, do not guess at a path. The first version of this check tested
+# ~/.config/itch/butler_creds, which is not where butler on macOS puts them
+# (Library/Application Support/itch/), so a correctly logged-in user would have
+# been told they were not authenticated. A guard that lies is worse than none.
+if ! butler login 2>&1 | grep -q 'credentials are valid'; then
   echo "butler is not authenticated. Run:  butler login" >&2
   exit 1
 fi
