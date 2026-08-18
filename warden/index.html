@@ -120,19 +120,24 @@ const BOSSES = [
   // Sentry is the teacher. Simulation had it killing MORE than Choir (8% vs
   // 1.2%), which is backwards for a first boss, so it is deliberately gentle:
   // widest escape floor, lowest greed pressure. Learn the loop here.
-  { name:'SENTRY',  n:5, hp:5,  layers:1, hunt:0, open:15, risk:.22,
+  { name:'SENTRY',  n:5, hp:5,  layers:1, hunt:0, risk:.22,
+    limit:14, squeeze:6,
     shapes:['cross'],
     tell:'It fires a full row and column. Stand off both.' },
-  { name:'CHOIR',   n:6, hp:7,  layers:1, hunt:0, open:11, risk:.42,
+  { name:'CHOIR',   n:6, hp:7,  layers:1, hunt:0, risk:.42,
+    limit:16, squeeze:5,
     shapes:['ring','cross'],
     tell:'Rings collapse inward. The centre is not always safe.' },
-  { name:'LATTICE', n:7, hp:9,  layers:2, hunt:0, open:11, risk:.48,
+  { name:'LATTICE', n:7, hp:9,  layers:2, hunt:0, risk:.48,
+    limit:18, squeeze:4,
     shapes:['diag','rows','cross'],
     tell:'Two shapes at once. Find the overlap gap, not the empty half.' },
-  { name:'HOUND',   n:7, hp:10, layers:2, hunt:1, open:10, risk:.5,
+  { name:'HOUND',   n:7, hp:10, layers:2, hunt:1, risk:.5,
+    limit:18, squeeze:4,
     shapes:['diag','rows','ring'],
     tell:'It bites where you STAND. Never end a turn still.' },
-  { name:'WARDEN',  n:7, hp:13, layers:2, hunt:1, open:9,  risk:.55,
+  { name:'WARDEN',  n:7, hp:13, layers:2, hunt:1,  risk:.55,
+    limit:20, squeeze:3,
     shapes:['cross','ring','diag','rows'],
     tell:'Everything, layered, and it hunts. You have done this before.' },
 ];
@@ -187,17 +192,37 @@ function shape(kind){
 
 function buildTells(){
   let t=[];
-  for(let i=0;i<boss.layers;i++)
+  // PRESSURE. With a guaranteed escape every turn, a patient player could simply
+  // never take a risk and win by attrition, which made the whole greed mechanic
+  // pointless. So the fight closes in: every few turns the boss adds another
+  // shape. You can always survive THIS turn, but you cannot survive forever, so
+  // the gold has to be taken while there is still room to take it.
+  const extra = Math.floor((turn-1)/boss.squeeze);
+  for(let i=0;i<boss.layers+extra;i++)
     t=t.concat(shape(boss.shapes[Math.floor(Math.random()*boss.shapes.length)]));
-  if(boss.hunt) for(let b=0;b<N;b++)for(let a=0;a<N;a++)
-    if(md(a,b,px,py)<=boss.hunt)t.push([a,b]);
+  // Hunt marks ONLY the tile you are standing on. Radius 1 covered exactly the
+  // set of tiles you can move to, so every option was lethal: Hound gave an
+  // unavoidable hit on 96% of turns and Warden on 98%. The boss's own tell says
+  // "it bites where you STAND", which is the correct design. The code now
+  // matches the promise.
+  if(boss.hunt) t.push([px,py]);
   const s=new Set(t.map(([x,y])=>idx(x,y)));
   // Guarantee an escape. A death you could not avoid breaks the contract the
   // whole genre rests on, so the floor is enforced, never hoped for.
-  const open=[];for(let i=0;i<N*N;i++)if(!s.has(i))open.push(i);
-  if(open.length<boss.open){
-    const sh=[...s].sort(()=>Math.random()-.5);
-    while(open.length<boss.open&&sh.length){const r=sh.pop();s.delete(r);open.push(r);}
+  // The old global floor ("keep N tiles open somewhere") is gone. It re-opened
+  // the board faster than the squeeze could close it, so escalation did nothing
+  // and a patient player could never lose. Fairness is the LOCAL guarantee
+  // below; pressure is the squeeze and the clock. Those are separate jobs.
+  // LOCAL escape guarantee. The floor above only promised a safe tile existed
+  // SOMEWHERE, which is worthless when every tile you can actually reach is
+  // lethal. At least one reachable tile must always survive, or the turn is a
+  // coin flip rather than a decision. Prefer clearing a tile you moved to over
+  // the one you are standing on, so staying still is never the free answer.
+  const reach=reachable().map(([x,y])=>idx(x,y));
+  if(reach.every(i=>s.has(i))){
+    const moves=reach.filter(i=>i!==idx(px,py));
+    const free=(moves.length?moves:reach)[Math.floor(Math.random()*(moves.length||reach.length))];
+    s.delete(free);
   }
   return s;
 }
@@ -255,7 +280,9 @@ function paint(){
     p.className='pip'+(i<hp?'':' gone');hpEl.appendChild(p);
   }
   if(shield){const p=document.createElement('div');p.className='pip shield';hpEl.appendChild(p);}
-  turnEl.textContent='TURN '+turn;
+  const left=boss.limit-turn+1;
+  turnEl.textContent='TURN '+turn+' / '+boss.limit;
+  turnEl.style.color = left<=3 ? 'var(--danger-line)' : (left<=6 ? 'var(--gold-line)' : '');
   fillEl.style.width=Math.max(0,bossHp/boss.hp*100)+'%';
   nameEl.textContent=boss.name;
   stageEl.textContent=(stage+1)+' / '+BOSSES.length;
@@ -283,6 +310,7 @@ function step(nx,ny){
     setTimeout(()=>{
       if(hp<=0)return died();
       if(bossHp<=0)return cleared();
+      if(turn>=boss.limit)return died(true);
       turn++;runTurns++;
       tells=buildTells();strikes=buildStrikes(tells);
       paint();busy=false;
@@ -323,12 +351,14 @@ function cleared(){
   });
 }
 
-function died(){
+function died(outlasted){
   over=true;deaths++;localStorage.setItem('warden:deaths',String(deaths));
   beep(85,.5,'sawtooth',.08);
   veil.className='on';
-  veil.innerHTML='<h2 style="color:var(--danger-fire)">YOU DIED</h2>'+
-    '<div class="r">Fell to <b>'+boss.name+'</b>, stage <b>'+(stage+1)+' of '+BOSSES.length+'</b>.'+
+  veil.innerHTML='<h2 style="color:var(--danger-fire)">'+(outlasted?'OUTLASTED':'YOU DIED')+'</h2>'+
+    '<div class="r">'+(outlasted
+      ? 'The <b>'+boss.name+'</b> outlasted you. It had <b>'+bossHp+'</b> left.<br>Playing safe is still losing.'
+      : 'Fell to <b>'+boss.name+'</b>, stage <b>'+(stage+1)+' of '+BOSSES.length+'</b>.')+
     '<br><br><b>'+boss.tell+'</b>'+
     '<br><br>'+coach()+
     '<br><br><span style="color:var(--faint)">Deaths: '+deaths+
