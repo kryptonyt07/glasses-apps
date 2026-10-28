@@ -20,14 +20,19 @@ Rehearse mode hides YOUR lines until you pinch ✓; Prompter mode auto-scrolls t
 (✓ pause · ▲▼ speed · ◀▶ jump). Text size S/M/L on the home menu (persisted) — tune it on-face.
 Long lines are auto-paginated at ~230 chars in Read/Rehearse.
 
-## Platform constraints (verified from DAT docs, Jul 2026)
-- No microphone, no Web Speech, no camera, no text input, no service workers on Web Apps.
-- "Offline" is best-effort only: single-file apps + localStorage survive restarts, but a fresh
-  page load needs network. Do not rely on it mid-audition — open the app before you're on.
-- localStorage/sessionStorage 5 MB. Geolocation + motion sensors available with permission.
-
-## Phase 2 (queued, not built): AI HUD
-POSTs OpenAI-format chat completions to the LiteLLM gateway (port 8000) reached over Tailscale
-from the phone; model param switches Claude ↔ local Ollama. Mic is unavailable (verified above),
-so input = gesture-selected prompt templates. **Never embed API keys client-side** — the glasses
-app is public JS; keys live only in LiteLLM env or a Vercel proxy with a bearer token.
+## Platform facts (updated 2026-10-28 from Meta's Oct 2026 toolkit: github.com/facebook/meta-wearables-webapp)
+- **Text input: YES.** A plain `<input>`/`<textarea>` opens the glasses' handwriting / dictation / keyboard
+  composer after wearer focus + pinch (programmatic focus alone does not open it). Used by scratch/ and Jarvis "Ask anything".
+- **Voice control via Meta AI (WebMCP, developer preview): YES, additive.** Register tools on `document.modelContext`;
+  "Hey Meta, ..." calls them. Off by default, enabled per device by Developer Mode or rollout, decided at app launch
+  (relaunch after enabling). Scalar params only; enum/min/max not enforced (validate in `execute`); 10 s deadline;
+  57-char effective name budget; reserved names (`openUrl`, `goBack`, `reload`, `getPageText`...) fail silently.
+  **The app must stay fully usable by D-pad.** Used by drill-timer/ (`dt_status`, `dt_start`, `dt_control`).
+  Privacy: tool results go to Meta AI (cloud). Never expose Jarvis brief/mail/calendar, Line Runner sides, or anything personal.
+- **Offline: YES.** Offline cold start loads the page so a service worker can answer from cache (root `sw.js`, network-first).
+- Still no raw microphone or camera for Web Apps (native Device Access Toolkit only). Geolocation, motion and
+  Neural Band wrist motion are available with permission. localStorage 5 MB.
+- Budgets: first load < 300 KB and < 15 requests (slow link, ~16 ms per KB), 30 Hz panel (33 ms frames).
+- Back = thumb + middle-finger gesture / `Escape`: push a history entry when leaving a home screen or back exits the app.
+- Testing: Meta Ray-Ban Display Simulator Chrome extension (600x600, additive blending, D-pad, QA checklist).
+  Live docs MCP: `https://mcp.developer.meta.com/wearables` (`search_webapps_docs`).

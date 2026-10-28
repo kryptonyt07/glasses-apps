@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=600, height=600, initial-scale=1.0, user-scalable=no">
 <title>Drill Timer</title>
+<meta name="description" content="Interval timer for basketball drills. Confirm actions in one short sentence; never read the full preset list unless asked.">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body { width:600px; height:600px; overflow:hidden; background:#000; color:#fff;
@@ -90,7 +91,13 @@ function flash(){
 function start(i){
   focusIdx = i;
   localStorage.setItem('dt:preset', String(i));
-  preset = PRESETS[i];
+  begin(PRESETS[i]);
+}
+
+// Shared by the D-pad (start) and the assistant (dt_start), so both paths
+// drive the exact same state and the screen always matches what was said.
+function begin(p){
+  preset = p;
   screen = 'run';
   history.pushState({run:true},'');
   phase = 'work'; round = 1; swT = 0;
@@ -132,7 +139,7 @@ document.addEventListener('keydown',(e)=>{
     return;
   }
   if (e.key==='Enter'){
-    if (phase==='done'){ start(focusIdx); return; }   // restart when finished
+    if (phase==='done'){ begin(preset); return; }     // restart the same drill (custom ones too)
     running = !running; lastTick = performance.now(); renderRun();
   }
   else if (e.key==='ArrowRight'){ // skip phase
@@ -157,6 +164,90 @@ document.addEventListener('keydown', (e)=>{
 });
 
 renderHome();
+
+// ── Voice control via Meta AI (WebMCP, 2026-10-28) ──────────────────────────
+// Meta's Oct 2026 toolkit: register tools on document.modelContext and the
+// wearer can say "Hey Meta, start 40 on 20 off for 6 rounds". Off by default,
+// enabled per device by Developer Mode or rollout, and decided at app LAUNCH
+// (relaunch after enabling). Purely additive: with no surface this block does
+// nothing and the D-pad path above is untouched.
+// Rules from Meta's ai-glasses-webapp-webmcp skill: only scalar params reach
+// the assistant; enum/min/max are NOT enforced, so validate here; a fulfilled
+// result always counts as success, so handled problems are {error, next_action}
+// JSON; registration must never be able to throw into the app.
+function problem(message, next_action){ return JSON.stringify({ error:true, message, next_action }); }
+function status(){
+  if (screen !== 'run' || !preset) return { screen:'home', selected: PRESETS[focusIdx].label.replace(/\s+/g,' ') };
+  if (preset.sw) return { screen:'run', mode:'stopwatch', running, elapsed_seconds: Math.floor(swT) };
+  return { screen:'run', label: preset.label.replace(/\s+/g,' '), phase, round, rounds: preset.rounds,
+           seconds_left: Math.max(0, Math.ceil(remaining)), running };
+}
+function safeRegister(ctx, tool){
+  try {
+    const r = ctx.registerTool(tool);
+    if (r && typeof r.then === 'function') r.then(undefined, (err)=>console.error(tool.name+' registration failed', err));
+  } catch (err) { console.error(tool.name+' registration failed', err); }
+}
+function presetByName(name){
+  const n = String(name||'').toLowerCase().trim();
+  if (!n) return -1;
+  return PRESETS.findIndex(p => p.label.toLowerCase().includes(n) || n.includes(p.label.toLowerCase().split(/\s+/)[0]));
+}
+(function registerVoice(){
+  const ctx = document.modelContext;
+  if (!ctx || typeof ctx.registerTool !== 'function') return;
+  safeRegister(ctx, {
+    name: 'dt_status',
+    description: 'Report the drill timer: which drill, work/rest phase, round, seconds left, running or paused. Call before acting if unsure.',
+    inputSchema: { type:'object', properties:{} },
+    annotations: { readOnlyHint: true },
+    execute: async () => JSON.stringify(Object.assign(status(), { next_action:'Answer in one short sentence. Stop and talk.' }))
+  });
+  safeRegister(ctx, {
+    name: 'dt_start',
+    description: 'Start a drill. Either name a preset (shooting, conditioning, HIIT, stopwatch) OR give custom work seconds, rest seconds and rounds in ONE call. Starts immediately.',
+    inputSchema: { type:'object', properties:{
+      preset: { type:'string', description:'Preset name: shooting, conditioning, hiit or stopwatch. Leave empty for a custom interval.' },
+      work_seconds: { type:'integer', description:'Custom work interval in seconds, 5 to 600.' },
+      rest_seconds: { type:'integer', description:'Custom rest interval in seconds, 0 to 300.' },
+      rounds: { type:'integer', description:'Custom number of rounds, 1 to 50.' }
+    }},
+    execute: async (a) => {
+      a = a || {};
+      if (a.preset){
+        const i = presetByName(a.preset);
+        if (i < 0) return problem('No preset called "'+a.preset+'".', 'Offer: shooting, conditioning, HIIT, stopwatch, or a custom work/rest/rounds. Stop and talk.');
+        start(i);
+      } else {
+        const w = Number(a.work_seconds), r = Number(a.rest_seconds), n = Number(a.rounds);
+        if (!Number.isInteger(w) || w < 5 || w > 600) return problem('Work must be 5 to 600 seconds.', 'Ask how long each work interval should be. Stop and talk.');
+        if (!Number.isInteger(r) || r < 0 || r > 300) return problem('Rest must be 0 to 300 seconds.', 'Ask how long each rest should be. Stop and talk.');
+        if (!Number.isInteger(n) || n < 1 || n > 50) return problem('Rounds must be 1 to 50.', 'Ask how many rounds. Stop and talk.');
+        begin({ label: 'CUSTOM  '+w+' / '+r+' × '+n, work:w, rest:r, rounds:n });
+      }
+      return JSON.stringify(Object.assign(status(), { next_action:'Confirm the drill started in one short sentence. Stop and talk.' }));
+    }
+  });
+  safeRegister(ctx, {
+    name: 'dt_control',
+    description: 'Control the running drill: pause, resume, skip (next phase), restart (current phase) or stop (back to the menu).',
+    inputSchema: { type:'object', properties:{
+      action: { type:'string', description:'One of: pause, resume, skip, restart, stop.' }
+    }, required:['action'] },
+    execute: async (a) => {
+      const act = String((a||{}).action||'').toLowerCase().trim();
+      if (act === 'stop'){ if (screen==='run') renderHome(); return JSON.stringify(Object.assign(status(), { next_action:'Confirm stopped in a few words. Stop and talk.' })); }
+      if (screen !== 'run' || !preset) return problem('No drill is running.', 'Offer to start one. Stop and talk.');
+      if (act === 'pause'){ running = false; }
+      else if (act === 'resume'){ if (phase==='done') return problem('That drill is finished.', 'Offer to restart it. Stop and talk.'); running = true; lastTick = performance.now(); }
+      else if (act === 'skip'){ document.dispatchEvent(new KeyboardEvent('keydown', { key:'ArrowRight' })); }
+      else if (act === 'restart'){ document.dispatchEvent(new KeyboardEvent('keydown', { key:'ArrowLeft' })); }
+      else return problem('Unknown action "'+act+'".', 'Use pause, resume, skip, restart or stop. Stop and talk.');
+      renderRun();
+      return JSON.stringify(Object.assign(status(), { next_action:'Confirm in a few words. Stop and talk.' }));
+    }
+  });
+})();
 
 // Offline support (2026-08-18, Meta v127 add-offline). Registered at the repo
 // root so one worker covers every app. Failure is non-fatal: no service worker

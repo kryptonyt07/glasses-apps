@@ -28,6 +28,20 @@
   .wx { color:#FFC24B; font-size:26px; margin:8px 0 14px; }
   .bigtime { font-size:64px; font-weight:800; line-height:1; }
   .date { color:#8fd6e8; font-size:22px; margin-bottom:4px; }
+  .menu.tight { gap:8px; }
+  .menu.tight button { font-size:21px; padding:10px 16px; }
+  /* Ask anything: a real textarea, so the glasses hand off to their own
+     handwriting / dictation composer (same pattern as scratch/). */
+  #pad { flex:1; width:100%; resize:none; background:#0a0a0a; color:#e8f6ff;
+    border:3px solid #2a3540; border-radius:14px; padding:14px 16px;
+    font-size:24px; line-height:1.35; font-family:inherit; outline:none; }
+  #pad:focus { border-color:#00E5FF; background:#06232b; }
+  #pad::placeholder { color:#4a545e; }
+  .row { display:flex; gap:12px; margin-top:12px; }
+  .row button { flex:1; font-size:21px; padding:13px 0; border-radius:12px;
+    background:#0a0a0a; color:#e8f6ff; border:3px solid #2a3540; font-family:inherit; }
+  .row button.focused { background:#06232b; border-color:#00E5FF; }
+  #cstat { font-size:17px; min-height:22px; margin-top:8px; color:#FFC24B; }
 </style>
 </head>
 <body>
@@ -61,7 +75,16 @@ const TEMPLATES = [
   { label:'ME · Talk me out of a purchase', m:'general', q:'I am about to impulse-buy something. Give me the three questions to ask before spending, fast.' }
 ];
 
-let screen = 'home', focusIdx = 0, askIdx = 0;
+let screen = 'home', focusIdx = 0, askIdx = 0, cIdx = 0;
+
+// ── Ask anything (2026-10-28) ───────────────────────────────────────────────
+// Meta's Oct 2026 web-app docs: a plain <textarea> opens the glasses'
+// handwriting / voice composer on wearer focus + pinch, no SDK. That retires
+// the "no mic, so templates only" limit this app was built around. Templates
+// stay for one-pinch asks. The draft survives sleep/backgrounding and is only
+// cleared once the gateway has answered, same rule as scratch/.
+const DRAFT = 'jv:draft';
+const MODES = [ { label:'ASK OPS', m:'ops' }, { label:'ASK ME', m:'general' } ];
 
 // ── Back navigation (2026-08-18) ────────────────────────────────────────────
 // Meta v127 retires on-screen back buttons: navigation is the thumb +
@@ -86,9 +109,18 @@ function render(){
       '<div class="menu">' + HOME.map((m,i)=>'<button class="'+(i===focusIdx?'focused':'')+'">'+m.label+'</button>').join('') + '</div>' +
       '<div class="hint">▲▼ choose · ✓ select</div>';
   } else if (screen==='ask'){
+    const items = ['✍ Ask anything…'].concat(TEMPLATES.map(t=>t.label));
     app.innerHTML = '<h1>ASK</h1><div class="sub">OPS = company brain · ME = personal · all local</div>' +
-      '<div class="menu">' + TEMPLATES.map((t,i)=>'<button class="'+(i===askIdx?'focused':'')+'">'+esc(t.label)+'</button>').join('') + '</div>' +
+      '<div class="menu tight">' + items.map((l,i)=>'<button class="'+(i===askIdx?'focused':'')+'">'+esc(l)+'</button>').join('') + '</div>' +
       '<div class="hint">▲▼ choose · ✓ ask · ◀ back</div>';
+  } else if (screen==='compose'){
+    app.innerHTML = '<h1>ASK ANYTHING</h1><div class="sub">▶ then pinch to write or dictate</div>' +
+      '<textarea id="pad" placeholder="Pinch to write or dictate…" spellcheck="false"></textarea>' +
+      '<div class="row">' + MODES.map((m,i)=>'<button class="'+(i===cIdx?'focused':'')+'">'+m.label+'</button>').join('') + '</div>' +
+      '<div id="cstat"></div><div class="hint">▲▼ OPS / ME · ✓ ask · ▶ edit · ◀ back</div>';
+    const pad = document.getElementById('pad');
+    pad.value = localStorage.getItem(DRAFT) || '';
+    pad.addEventListener('input', ()=> localStorage.setItem(DRAFT, pad.value));
   }
 }
 
@@ -161,6 +193,18 @@ function ask(t){
   }).catch(e=>page('JARVIS','<span class="warn">'+esc(e.message)+'</span>'));
 }
 
+function askFree(m){
+  const pad = document.getElementById('pad');
+  const text = (pad ? pad.value : '').trim();
+  if (!text){ document.getElementById('cstat').textContent = 'nothing to ask yet: ▶ then pinch to write'; return; }
+  history.pushState({s:'page'}, '');
+  page('JARVIS','<span class="dim">thinking…</span>');
+  gw('/v1/ask', {q: text, m}).then(j=>{
+    if (j.error) page('JARVIS','<span class="warn">'+esc(j.error)+'<br>(question kept)</span>');
+    else { localStorage.removeItem(DRAFT); page('JARVIS', esc(j.text)); fit(); }
+  }).catch(e=>page('JARVIS','<span class="warn">'+esc(e.message)+'<br>(question kept)</span>'));
+}
+
 function fit(){
   const el = document.getElementById('body');
   let size = 30;
@@ -175,10 +219,23 @@ document.addEventListener('keydown',(e)=>{
     else if (e.key==='ArrowUp'){ focusIdx=(focusIdx-1+HOME.length)%HOME.length; render(); }
     else if (e.key==='Enter'){ HOME[focusIdx].act(); }
   } else if (screen==='ask'){
-    if (e.key==='ArrowDown'){ askIdx=(askIdx+1)%TEMPLATES.length; render(); }
-    else if (e.key==='ArrowUp'){ askIdx=(askIdx-1+TEMPLATES.length)%TEMPLATES.length; render(); }
-    else if (e.key==='Enter'){ ask(TEMPLATES[askIdx]); }
+    const n = TEMPLATES.length + 1;
+    if (e.key==='ArrowDown'){ askIdx=(askIdx+1)%n; render(); }
+    else if (e.key==='ArrowUp'){ askIdx=(askIdx-1+n)%n; render(); }
+    else if (e.key==='Enter'){ if (askIdx===0){ enter('compose'); cIdx=0; render(); } else ask(TEMPLATES[askIdx-1]); }
     else if (e.key==='ArrowLeft'){ screen='home'; render(); }
+  } else if (screen==='compose'){
+    const pad = document.getElementById('pad');
+    // While the composer has focus every key belongs to it (▲▼ move the caret).
+    // Escape only leaves the pad; the global Escape handler must not fire.
+    if (document.activeElement === pad){
+      if (e.key==='Escape'){ e.preventDefault(); e.stopImmediatePropagation(); pad.blur(); }
+      return;
+    }
+    if (e.key==='ArrowDown' || e.key==='ArrowUp'){ cIdx = 1 - cIdx; render(); }
+    else if (e.key==='ArrowRight'){ pad.focus(); }
+    else if (e.key==='Enter'){ askFree(MODES[cIdx].m); }
+    else if (e.key==='ArrowLeft'){ screen='ask'; render(); }
   } else if (screen==='brief'){
     if (e.key==='ArrowRight' || e.key==='ArrowDown'){
       if (briefIdx < briefCards.length-1){ briefIdx++; renderBriefCard(); }
